@@ -1,0 +1,24 @@
+problem with technologies 466 and 467 (python) or 467 and 468 (matlab) with tech_use/ tech_use_hourly in post_generator_indicators
+
+This happens in module 3_dispatch (iteration iId = 1) - disp_energy_interyearly - disp_gas - first loop for iAg in range (nAg). Have to check what is happening here. These 2 technologies are gas dispatch technologies.
+
+disp_gas: here, hourly_balance is slightly off, activity_balance is correct. So something must be wrong with tech_use_hourly. This variable is first defined in disp_energy_balance
+
+In disp_energy_balance, values of tech_use are off by a few decimals from iteration Ii = 8. I don't know what's happening there.
+
+in disp_energy_balance, the numbers for activity_gap are slightly off. activities_net_volumes are okay, so this must be about act_balance --> activity_balances
+
+something must be wrong with activity_balances
+
+but activity_balances as it is retrieved is correct. So something must be happening in the code.
+
+in disp_energy_balance, the last few decimals of some of the activity_gap values are off. I tried rounding, I tried to align rounding behavior, I checked all the individual variables (they're correct), still the numbers don't match. I think this is the reason that later on in gas_dispatch, the numbers are also off for the 2 technologies that are problematic in post_generator_indicators. If I change use_factor in disp_energy_balance, that does have an effect on the values that are off later on (hourly_balance in disp_gas)
+
+It might be that there is a problem for use_factor with technologies for which the denominator is 0? Because then adding this small number makes a big difference?
+
+
+Also problems from mod4_disp onwards in iteration 2025. This also seems to be because of inconsistencies with tech_use... So this really has to be fixed.
+
+
+In period 2025, after the first iteration in disp_energy_balance, act_balance is wrong. Now I have to find out for which exact activity this happens.
+
