@@ -153,10 +153,11 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     print('--Calculating price ranges and hours')
     price_ranges = np.linspace(0, 1, nRp)
     price_ranges_hours = np.zeros(nRp, dtype=int)
-    for iRp in range(nRp):
-        price_ranges_hours[iRp] = int(np.ceil(nH * price_ranges[iRp]))
+    denom = nRp - 1                              # 20
+    nums  = np.arange(nRp, dtype=int) * nH       # [0, 8760, 17520, …, 175200]
+    # ceil(a/b) == (a + b - 1) // b   when a,b are ints
+    price_ranges_hours = (nums + denom - 1) // denom
     price_ranges_hours[0] = 1
-    
 
     # Initialize model dimensions
     print('--Initializing model dimensions')
