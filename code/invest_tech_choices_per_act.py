@@ -22,20 +22,22 @@ def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP
     tech_LCOPs[coord_buffer] += 1e6
 
     # Initialize LCOP order choices
-    # tech_choices_LCOP_order = np.zeros(nTb, dtype=int)
+    tech_choices_LCOP_order = np.zeros(nTb, dtype=int)
 
     for iA in range(nA):
         # Identify technologies that satisfy the activity
         coord_tech_act = np.array([activities_names[iA] == act for act in activity_per_tech])
-        nTa = np.sum(coord_tech_act)
+        idxs = np.nonzero(coord_tech_act)[0]
+        nTa = idxs.size
 
         # Order technologies by LCOP
         tech_LCOPs_options = tech_LCOPs[coord_tech_act]
-        order_LCOP = np.argsort(tech_LCOPs_options)
+        order_LCOP = np.argsort(tech_LCOPs_options, kind='mergesort')
         order_in_line = np.zeros(nTa, dtype=int)
         for iTa in range(nTa):
             order_in_line[order_LCOP[iTa]] = iTa + 1
-        tech_choices_LCOP_order[np.where(coord_tech_act)[0], iP] = order_in_line
+            
+        tech_choices_LCOP_order[idxs] = order_in_line
 
         # Identify non-buffer technologies
         coord_tech_opr = ~coord_buffer
@@ -96,6 +98,6 @@ def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP
 
     # Save variables
     technologies['balancers']['choices_agent'][:, :, iP] = tech_choices_agent
-    technologies['balancers']['choices_lcop_order'][:, iP] = tech_choices_LCOP_order[:, iP]
+    technologies['balancers']['choices_lcop_order'][:, iP] = tech_choices_LCOP_order
 
     return technologies, tech_choices
