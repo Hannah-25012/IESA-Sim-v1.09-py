@@ -71,7 +71,10 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
             LCOP_min = np.min(LCOP_vec)
             LCOP_max = LCOP_min + 0.5 * abs(LCOP_min) + 1e-6
             emissions_min = np.min(emissions_vec)
-            emissions_max = max(np.max(emissions_vec), 0) + 1e-6
+            # Attention: Matlab takes only the first element of emissions_vec (not the maximum of the vector) and then compares to 0. 
+            # To match this (for comparison), we need to remove np.max
+            # emissions_max = max(np.max(emissions_vec), 0) + 1e-6
+            emissions_max = max(emissions_vec[0], 0) + 1e-6
 
             # Calculate the decreasing linear functions from 1 to 0
             # For emissions
