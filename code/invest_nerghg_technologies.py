@@ -51,51 +51,35 @@ def invest_nerghg_technologies(dimensions, activities, technologies,
 
                     # Check sufficiency
                     remaining_gap = emission_gap[iA] - np.sum(valid_investments * cap2act_temp)
-                    fill_investments = np.zeros((nT,1))  # Preallocate
-                    other_investments = np.zeros((nT,1))  # Preallocate
-
+                    
                     if remaining_gap > 0:
                         tech_room = techstock_max[tech_coord].flatten() - techstock_exist[tech_coord].flatten() - valid_investments.flatten()
                         cand_availability = tech_room > 0
                         order_search = tech_choices_lcop_order[tech_coord]
-                        iT_search = 1
 
-                        while remaining_gap > 0:
-                            iT = np.where(order_search == iT_search)[0]
+                        order_idx = np.argsort(order_search)
+                        fills = np.zeros(nT)
+                        other_investments = np.zeros(nT)
+                        rem = remaining_gap
 
-                            if iT.size > 0:
-                                selected_index = iT[0]
-                            
-                                if cand_availability[selected_index]:
-                                    # Compute how much can be invested
-                                    remaining_gap_ratio = remaining_gap / cap2act_temp[selected_index]
-                                    available_tech_room = tech_room[selected_index]
-                                        
-                                    fill_investments[selected_index] = min(remaining_gap_ratio, available_tech_room)
-                                        
-                                    # Update remaining gap
-                                    remaining_gap -= fill_investments[selected_index] * cap2act_temp[selected_index]
-                                
-                                # In MATLAB, the loop increments iT_search each time and breaks if it surpasses nT
-                                iT_search += 1
-                                if iT_search > nT:
-                                    break
-                            
-                            
-                            if remaining_gap < 1e-6:
-                                remaining_gap = 0
-                            iT_search += 1
-                            if iT_search > nT:
-                                # Remaining gap will be emitted (first nER-GHG technology)
-                                other_investments[0,0] = remaining_gap
-                                remaining_gap = 0
+                        for rank in order_idx:
+                            if rem <= 0:
+                                break
+                            if cand_availability[rank]:
+                                # invest as much as possible
+                                possible = rem / cap2act_temp[rank]
+                                amt = min(possible, tech_room[rank])
+                                fills[rank] = amt
+                                rem -= amt * cap2act_temp[rank]
 
-                        # Declare investments
-                        valid_investments = valid_investments.reshape(-1, 1)
-                        fill_investments = fill_investments.reshape(-1, 1)
-                        other_investments = other_investments.reshape(-1, 1)
+                        # if still gap remains, assign to first technology
+                        if rem > 0:
+                            other_investments[0] = rem
 
-                        investments[tech_coord] = valid_investments + fill_investments + other_investments
+                        # Sum all investments
+                        investments[tech_coord, 0] = (
+                            valid_investments.flatten() + fills + other_investments
+                        )
 
     # Adjust investments and new stocks
     techstock_new = techstock_exist + investments
