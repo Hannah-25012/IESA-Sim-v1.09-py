@@ -105,8 +105,8 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                                 iT_search += 1
                                 
                                 if iT_search > nT and remaining_gap > 0:
-                                    tech_room_others = (techstock_max[tech_coord] - techstock_exist[tech_coord] -
-                                                        valid_investments - fill_investments)
+                                    tech_room_others = (techstock_max[tech_coord] - techstock_exist[tech_coord].ravel() -
+                                                        valid_investments.ravel() - fill_investments.ravel())
                                     if np.sum(tech_room_others) > 0:
                                         for iT in range(nT):
                                             other_investments[iT] = max(
@@ -184,5 +184,6 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
     technologies['balancers']['stocks']['max'][:, iP] = techstock_max
 
     
+
 
     return technologies, activities, techstock_new, investments
