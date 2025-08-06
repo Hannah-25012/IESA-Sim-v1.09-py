@@ -152,7 +152,8 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
 
     
     energy_scarcity_bin = np.zeros((nA, 1), dtype=bool)
-    coord_gap = (energy_gap > 0).reshape(-1, 1)
+    # coord_gap = (energy_gap > 0).reshape(-1, 1)
+    coord_gap = (energy_gap > 1e-12).reshape(-1, 1)
     coord_nonE = (np.array(activity_label) != 'Electricity').astype(np.float64).reshape(-1, 1)
     logical_indices = np.logical_and(coord_gap, coord_nonE.astype(bool))
     energy_scarcity_bin[logical_indices] = True
@@ -187,3 +188,4 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
 
 
     return technologies, activities, techstock_new, investments
+
