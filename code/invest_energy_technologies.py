@@ -181,6 +181,7 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
             energy_scarcity_add[iAe] = energy_gap[coord_activity][0]
 
 
+    energy_scarcity = activities['energies']['scarcity'][:, iP].copy()
     activities['energies']['scarcity'][:, iP] = energy_scarcity + energy_scarcity_add.flatten()
     technologies['balancers']['stocks']['max'][:, iP] = techstock_max
 
@@ -188,4 +189,5 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
 
 
     return technologies, activities, techstock_new, investments
+
 
