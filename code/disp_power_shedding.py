@@ -32,15 +32,24 @@ def disp_power_shedding(shed_guarantee, shed_maxvolume_hourly,
 
     # Loop through each shedding technology
     for iS in range(nS):
+    
+        # find which electricity-activity columns the technology uses
+        cols = np.where(shed_per_elec[iS, :].astype(bool))[0]
 
-        # Identify the prices vector of the technology
-        prices_vector = elec_prices_hourly[:, shed_per_elec[iS, :].astype(bool)]
+        # build a 1D price vector and order the hours of preference
+        if len(cols) == 1:
+            prices_vector = elec_prices_hourly[:, cols[0]]
+            prices_order   = np.argsort(prices_vector, kind='stable')
+        else:
+            pv_flat = elec_prices_hourly[:, cols].flatten(order='F')
+            flat_idx = np.argsort(pv_flat, kind='stable')
+            prices_order = flat_idx % nH
 
         # Get the normalized flexible volume
         flex_volume = shed_maxvolume_hourly[:, iS] - shed_minvolume_hourly[:, iS]
 
         # Get the flexible target
-        flex_target = shed_guarantee[iS] - np.sum(shed_minvolume_hourly[:, iS])
+        flex_target = shed_guarantee[iS] - shed_minvolume_hourly[:, iS].sum()
 
         # Order the hours of preference
         prices_order = np.argsort(prices_vector, axis=0).flatten()
@@ -49,5 +58,6 @@ def disp_power_shedding(shed_guarantee, shed_maxvolume_hourly,
         cumsum_volume = np.cumsum(flex_volume[prices_order])
         last_on = np.searchsorted(cumsum_volume, flex_target, side='left')
         shed_use_hourly[prices_order[:last_on + 1], iS] = 1
+
 
     return shed_use_hourly
