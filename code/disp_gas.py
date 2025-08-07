@@ -143,7 +143,7 @@ def disp_gas(dimensions, parameters, activities, technologies, profiles, policie
                 if matching_indices:
                     feedin_index = feedin_activities.index(act_for_feedin[matching_indices[0]])
                     feedin_effect_tech = feedin_values[feedin_index, iP] * (
-                        activity_balances[coord_prices, :][:, coord_act] *
+                        activity_balances[coord_prices, :][:, coord_act].ravel() *
                         feedin_subject[coord_prices]
                     )
             feedin_effect_tech = np.maximum(feedin_effect_tech, 0)
@@ -325,3 +325,4 @@ def disp_gas(dimensions, parameters, activities, technologies, profiles, policie
 
 
     return tech_use_hourly, prices_hourly, tech_stock
+
