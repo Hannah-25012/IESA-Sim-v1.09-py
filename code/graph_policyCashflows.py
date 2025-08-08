@@ -41,6 +41,8 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
     ax.plot(periods, total_line, 'k-', linewidth=2)
     ax.set_ylabel('policy cashflows [B€]', fontname=font_name, fontsize=font_size)
     ax.set_ylim([-100, 100])
+    # Matlab displays the graph in 20-steps
+    ax.set_yticks(np.arange(-100, 101, 20))
     
     # Formatting section
     ax.yaxis.grid(True)
@@ -82,4 +84,5 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
             patch.set_facecolor(color_code[6, :])
     
     # Show the plot
+
     plt.show(block=False)
