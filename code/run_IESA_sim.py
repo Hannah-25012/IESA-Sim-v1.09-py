@@ -2,6 +2,7 @@
 import json
 from settings_read import settings_read
 from main import main
+import matplotlib.pyplot as plt
 
 # Specify version number
 version_number = "1.09"
@@ -19,6 +20,9 @@ print(json.dumps(settings, indent=4))
 # Run IESA-Sim
 main(settings)
 
+# Keep plots open even if the model is done running
+plt.show()
 
 # Goodbye message
 print("IESA-Sim has finalized the scenario simulation.")
+
