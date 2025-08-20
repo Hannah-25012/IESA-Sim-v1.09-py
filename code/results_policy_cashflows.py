@@ -107,10 +107,11 @@ def results_policy_cashflows(dimensions, parameters, types, activities, technolo
                     # Expand the capital costs for the economic lifetime
                     xP = int(np.ceil(tech_lifetime / 5))
                     for iP in range(nP):
-                        validity = slice(iP, min(nP, iP + xP))
-                        subsidy_cashflow[validity] = subsidy_cashflow[validity] + dep_inv_tech[iP] * subsidy_values[iAs_index, iP] / 100
+                        validity = min(nP, iP + xP + 1)
+                        subsidy_cashflow[iP:validity] += (dep_inv_tech[iP] * subsidy_values[iAs_index, iP] / 100)
     policy_cashflows[iPc, :] = subsidy_cashflow
 
     # Save variables
     results['policy_cashflows'] = policy_cashflows
     return results
+
