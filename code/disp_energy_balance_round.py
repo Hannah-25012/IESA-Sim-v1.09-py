@@ -5,4 +5,4 @@ def round_half_away_from_zero(x, decimals=0):
     # sign(x) * floor(abs(x) * factor + 0.5) / factor
     return np.sign(x) * np.floor(np.abs(x) * factor + 0.5) / factor
 
-test = 2
+test = 2.2
