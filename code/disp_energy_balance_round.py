@@ -6,3 +6,4 @@ def round_half_away_from_zero(x, decimals=0):
     return np.sign(x) * np.floor(np.abs(x) * factor + 0.5) / factor
 
 test = 2.2
+test2 = 2
