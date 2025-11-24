@@ -1,8 +1,11 @@
+# Function to graph the evolution of primary energy
+# CHECK: Have to go over this section to check if positive and neg parts are needed and to make the plot more pretty
 import numpy as np
 import matplotlib.pyplot as plt
 import math
 
 def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_size, color_code):
+
     # Extract parameters
     nEl = dimensions['nEl']
     energy_labels = types['energy']['labels']
@@ -14,10 +17,12 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
                       'Bio-fuels', 'Hydrogen', 'Solar', 'Wind', 'Other RE', 'Electricity',
                       'Synfuels', 'Oil Products', 'Ammonia', 'Heat', 'NA']
     order = []
+
     # The list so far contains nan as the last value, so we need to replace with 'NA' to match the ordered_labels 
     energy_labels = [x if not (isinstance(x, float) and math.isnan(x)) 
                  else 'NA'
                  for x in energy_labels]
+    
     for i in range(nEl):
         order.append(energy_labels.index(ordered_labels[i]))
 
@@ -33,8 +38,7 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
 
     # Creating the graph
     fig, ax = plt.subplots()
-    # Reorder data as in Matlab: y1_plot = y1(order,:) and y2_plot = y2(order,:)
-    y1_plot = y1[order, :]
+    y1_plot = y1[order, :] # Reorder data as in Matlab: y1_plot = y1(order,:) and y2_plot = y2(order,:)
     y2_plot = y2[order, :]
 
     # Plot positive values as a stacked bar chart
@@ -67,11 +71,9 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
         tick.set_fontname(font_name)
         tick.set_fontsize(font_size)
     
-    # Legend (horizontal orientation, 5 columns)
-    ax.legend(ncol=5, prop={'family': font_name, 'size': 12})
+    ax.legend(ncol=5, prop={'family': font_name, 'size': 12}) # Legend (horizontal orientation, 5 columns)
     
-    # Remove top and right borders (box off)
-    ax.spines['top'].set_visible(False)
+    ax.spines['top'].set_visible(False) # Remove top and right borders (box off)
     ax.spines['right'].set_visible(False)
     
     plt.show(block=False)

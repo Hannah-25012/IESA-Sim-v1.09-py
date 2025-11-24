@@ -1,7 +1,10 @@
+# Function to graph policy cashflows
+# CHECK: Are positive and neg part really needed? Go over all graphing routines again
 import numpy as np
 import matplotlib.pyplot as plt
 
 def graph_policyCashflows(types, activities, results, font_name, font_size, color_code):
+
     # Extract parameters
     policy_cashflows_categories = types['policy_cashflows_categories']
     periods = activities['periods']
@@ -19,17 +22,17 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
 
     # Creating the graph
     _ , ax = plt.subplots()
+
     # Plot stacked positive bars
     stack_bottom = np.zeros_like(periods, dtype=float)
     bars_a = []
-    # Assuming y1 is a 2D array with shape (num_categories, num_periods)
-    for i in range(y1.shape[0]):
+    for i in range(y1.shape[0]): # Assuming y1 is a 2D array with shape (num_categories, num_periods)
         bar_container = ax.bar(periods, y1[i, :], bottom=stack_bottom, edgecolor='none')
         stack_bottom += y1[i, :]
         bars_a.append(bar_container)
-    # Plot total line over positive bars
-    total_line = np.sum(y1, axis=0) + np.sum(y2, axis=0)
+    total_line = np.sum(y1, axis=0) + np.sum(y2, axis=0) # Plot total line over positive bars
     ax.plot(periods, total_line, 'k-', linewidth=2)
+
     # Plot stacked negative bars
     stack_bottom_neg = np.zeros_like(periods, dtype=float)
     bars_b = []
@@ -37,12 +40,10 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
         bar_container = ax.bar(periods, y2[i, :], bottom=stack_bottom_neg, edgecolor='none')
         stack_bottom_neg += y2[i, :]
         bars_b.append(bar_container)
-    # Plot total line again over negative bars
-    ax.plot(periods, total_line, 'k-', linewidth=2)
+    ax.plot(periods, total_line, 'k-', linewidth=2) # Plot total line over negative bars
     ax.set_ylabel('policy cashflows [B€]', fontname=font_name, fontsize=font_size)
     ax.set_ylim([-100, 100])
-    # Matlab displays the graph in 20-steps
-    ax.set_yticks(np.arange(-100, 101, 20))
+    ax.set_yticks(np.arange(-100, 101, 20)) # Matlab displays the graph in 20-steps
     
     # Formatting section
     ax.yaxis.grid(True)
@@ -63,7 +64,6 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
     ax.spines['right'].set_visible(False)
     
     # Coloring section
-    # Note: Matlab indices start at 1; Python indices are 0-based.
     if len(bars_a) >= 4:
         for patch in bars_a[0]:
             patch.set_facecolor(color_code[11, :])
@@ -84,5 +84,4 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
             patch.set_facecolor(color_code[6, :])
     
     # Show the plot
-
     plt.show(block=False)

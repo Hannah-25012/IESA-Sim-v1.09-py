@@ -1,5 +1,4 @@
-# Function to identify the required driver stocks to satisfy economic drivers.
-# Attention: Code runs fine. Still need to check the for-loop - what the calculations do and whether they are correct. report_gap is defined as "false" in mod2_invest, not sure why?
+# File to identify the required driver stocks to satisfy economic drivers.
 
 def invest_drivers_sufficiency(dimensions, activities, technologies, tech_stock_exist, report_gap, ip):
    

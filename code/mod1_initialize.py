@@ -1,7 +1,9 @@
+# File to intitialize model dimensions and variables
 import numpy as np
 from initialize_prices import initialize_prices
 
 def mod1_initialize(settings, types, activities, technologies, agents, policies):
+
     # Extract inputs
     energy_labels = types['energy'] ['labels']
     energyPrice_init = types['energy'] ['price init']
@@ -28,7 +30,6 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     agent_types = agents['types']
     multi_criteria_categories = agents['criteria']['categories']
     taxes_activities = policies['taxes']['activities']
-    # np.array added to use boolean indexing
     taxes_values = np.array(policies['taxes']['values'])
     sectors = types['sectors']
 
@@ -40,23 +41,22 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     nIp_max = 21
     nRp = 21  # Number of price ranges for shedding and shifting technologies
 
-    # Identify activity types per activity
+    # === Identify activity types per activity ===
     print('--Allocating sets')
     activities_driver = [name for name, typ in zip(activity_names, activity_type_act) if typ == 'Driver']
     activities_energy = [name for name, typ in zip(activity_names, activity_type_act) if typ in ['Energy', 'Fix Energy']]
     activities_emission = [name for name, typ in zip(activity_names, activity_type_act) if typ == 'Emission']
 
-    # Identify the electricity activities
+    # === Identify the electricity activities ===
     activities_elec_coord = np.array(activity_label) == 'Electricity'
     activities_elec = np.array(activity_names)[activities_elec_coord]
 
-    # Identify the gaseous network activities
+    # === Identify the gaseous network activities ===
     activities_gaseous_coord = np.array(activity_resolution) == 'daily'
     activities_gaseous = np.array(activity_names)[activities_gaseous_coord]
 
-    # Identify activity types per technology
+    # === Identify activity types per technology ===
     nTb = len(tech_balancers)
-    # Attention: I'm not sure why nTi is defined here, it doesn't directly come back. Maybe better to move?
     nTi = len(tech_infra)
     technologies_driver = np.zeros(nTb, dtype=bool)
     technologies_energy = np.zeros(nTb, dtype=bool)
@@ -67,7 +67,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
         technologies_energy[iTb] = tech_activity in activities_energy
         technologies_emission[iTb] = tech_activity in activities_emission
 
-    # Obtain the day ranges of flexible technologies
+    # === Obtain the day ranges of flexible technologies ===
     flexibility_range_days = np.zeros(nTb)
     flexibility_mapping = {
         '1 day [d]': 1, '3 days [r]': 3, '1 week [w]': 7, '1 month [m]': 31,
@@ -76,8 +76,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     for iTb, range_key in enumerate(flexibility_range):
         flexibility_range_days[iTb] = flexibility_mapping.get(range_key, 0)
 
-    # Calculate annuity factors
-    # Attention: Didn't check calculation in detail yet. Might be good to check for one or 2 technologies.
+    # === Calculate annuity factors ===
     print('--Calculating annuity factors')
     annuity_fact = np.zeros(nTb)
     annuity_fact_infra = np.zeros(nTi)
@@ -92,11 +91,10 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
         n = ec_lifetime_infra[iTi]
         coord_agent = agent_profiles.index('Medium companies')
         r = agents_dr[coord_agent]
-        # Manuel: There seems to be a mistake in the code. The code says annuity_faactivity_type_actct here, while it should be annuity_fact_infra - right?
-        # annuity_fact_infra[iTi] = r / (1 - (1 + r) ** -n)
-        annuity_fact[iTi] = r / (1 - (1 + r) ** -n)
+        annuity_fact_infra[iTi] = r / (1 - (1 + r) ** -n) # MODIFIED & CHECK: The code used to say annuity_fact here, while it should be annuity_fact_infra - right?
+        # annuity_fact[iTi] = r / (1 - (1 + r) ** -n)
 
-    # Initialize energy prices
+    # === Initialize energy prices ===
     print('--Initializing energy prices')
     nAe = len(activities_energy)
     initialized_energy_prices = np.zeros(nAe)
@@ -105,8 +103,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
         coord_label = energy_labels.index(label)
         initialized_energy_prices[iAe] = energyPrice_init[coord_label]
 
-    # Initialize emission prices
-    # Attention: The code runs fine, but not for every emission activity, a price is retrieved. Double-check how this works.
+    # === Initialize emission prices ===
     print('--Initializing emission prices')
     nAc = len(activities_emission)
     initialized_emission_prices = np.zeros(nAc)
@@ -114,29 +111,25 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
         coord_tech = activity_per_tech.index(emission_activity)
         initialized_emission_prices[iAc] = np.max(vom_cost_init[coord_tech])
 
-    # Extracting infrastructure activities
+    # === Extracting infrastructure activities ===
     print('--Extracting infrastructure activities')
     coord_infra = np.zeros(len(activity_names), dtype=bool)
     for tech_activity in activity_per_tech_infra:
         coord_infra |= np.array(activity_names) == tech_activity
     activities_infra = np.array(activity_names)[coord_infra]
 
-
-    # Initialiying activity prices
-    # Attention: The code runs fine, but I didn't check the logic yet! 
+    # === Initialiying activity prices ===
     initialized_prices = initialize_prices(activities, tech_categories, activity_label,
                                        activity_per_tech, activities_energy, activities_emission,
                                        taxes_activities, taxes_values, vom_cost)
 
-
-    # Allocate the planned decommissioning 
+    # === Allocate the planned decommissioning === 
     print('--Allocating planned decommissioning')
     decommissionings = tech_stock_dec
-    # shows remaining stock of technologies after planned decommissioning, excluding negative numbers (i.e. the lowest possible number is 0)
-    # Manuel: I feel like there's a mistake in the code here? Why is decom_diff not used? In the matlab version, there's a comment: "% decommissionings(:,end) = decommissionings(:,end) + decom_dif;"
-    decom_dif = np.maximum(0, tech_stock_exist - np.sum(decommissionings, axis=1))
+    # This line of code shows remaining stock of technologies after planned decommissioning, excluding negative numbers (i.e. the lowest possible number is 0)
+    decom_dif = np.maximum(0, tech_stock_exist - np.sum(decommissionings, axis=1)) # CHECK: I feel like there's a mistake in the code here? Why is decom_diff not used? In the matlab version, there's a comment: "% decommissionings(:,end) = decommissionings(:,end) + decom_dif;"
 
-
+    # === Defining categories ===
     # Cost categories definition
     cost_categories = ['capital', 'fixed operational', 'variable', 'fuels', 'emissions', 'exporting revenues']
 
@@ -149,23 +142,23 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     # Policy cashflows categories
     policy_cashflows_categories = ['EUA', 'Taxes', 'Feed-In subsidies', 'Investment subsidies']
 
-    # Price percentile ranges and hours
+    # === Price percentile ranges and hours ===
     print('--Calculating price ranges and hours')
     price_ranges = np.linspace(0, 1, nRp)
     price_ranges_hours = np.zeros(nRp, dtype=int)
     denom = nRp - 1                              # 20
     nums  = np.arange(nRp, dtype=int) * nH       # [0, 8760, 17520, …, 175200]
-    # ceil(a/b) == (a + b - 1) // b   when a,b are ints
     price_ranges_hours = (nums + denom - 1) // denom
     price_ranges_hours[0] = 1
 
-    # Initialize model dimensions
+    # === Initialize model dimensions === 
     print('--Initializing model dimensions')
     nIp = settings['iterations']['power']
-    # Attention: I'm not exactly sure why the 3 lines below are there. They set nIp to an uneven number and ensure it's between 3 and 21. Double-check why.
+    # The 3 lines below set nIp to an uneven number and ensure it's between 3 and 21
     if nIp % 2 == 0:
         nIp += 1
     nIp = min(max(nIp, nIp_min), nIp_max)
+
     dimensions = {
         'nH': nH,
         'nDy': nDy,
@@ -194,7 +187,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
         'nPc': len(policy_cashflows_categories),
     }
 
-    # Initialize model variables
+    # === Initialize model variables ===
     print('--Initializing model variables')
     energy_prices = np.zeros((dimensions['nAe'], dimensions['nP']))
     energy_scarcity = np.zeros((dimensions['nAe'], dimensions['nP']))
@@ -216,16 +209,15 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
 
     multi_criteria_performance_tech = np.zeros((dimensions['nTb'], dimensions['nMC'], dimensions['nP']))
     tech_choices_agent = np.zeros((dimensions['nTb'], dimensions['nAT'], dimensions['nP']))
-
     tech_choices_LCOP_order = np.zeros((dimensions['nTb'], dimensions['nP']), dtype=int)
 
     primary_energy = np.zeros((dimensions['nEl'], dimensions['nP']))
     energy_exports = np.zeros((dimensions['nAe'], dimensions['nP']))
+
     emissions = np.zeros((dimensions['nP'],1))
     emissions_sector_pos = np.zeros((len(sectors), dimensions['nP']))
     emissions_sector_neg = np.zeros((len(sectors), dimensions['nP']))
     emissions_stored = np.zeros((dimensions['nP'],1))
-
 
     system_costs = np.zeros((dimensions['nCc'], dimensions['nP']))
 
@@ -235,7 +227,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
 
     policy_cashflows = np.zeros((dimensions['nPc'], dimensions['nP']))
 
-    # Saving outputs
+    # === Saving outputs ===
     types['energy']['primary'] = primary_energy
     types['policy_cashflows_categories'] = policy_cashflows_categories
 

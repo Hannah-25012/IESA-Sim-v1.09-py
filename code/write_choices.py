@@ -1,7 +1,7 @@
+# File to write agents' choices
 import pandas as pd
 
 def write_choices(activities, technologies, agents, writer):
-    # File to write the projected LCOPs used for the investment decisions
 
     # Extract Parameters
     periods = activities['periods']
@@ -21,8 +21,7 @@ def write_choices(activities, technologies, agents, writer):
     nP = len(periods)
     nTb = len(tech_balancers)
     nAt = len(agent_types)
-    # Create a list of lists with dimensions (n_tb*n_at + 1) x (n_p + 7)
-    c = [[None for _ in range(nP + 7)] for _ in range(nTb * nAt + 1)]
+    c = [[None for _ in range(nP + 7)] for _ in range(nTb * nAt + 1)] # Create a list of lists with dimensions (n_tb*n_at + 1) x (n_p + 7)
     c[0][0] = 'Technology'
     c[0][1] = 'Name'
     c[0][2] = 'Sector'
@@ -37,8 +36,10 @@ def write_choices(activities, technologies, agents, writer):
     # For each technology report the LCOPs
     i_row = 1
     for iTb in range(nTb):
+
         # For each LCOPs category report the value
         for iAt in range(nAt):
+            
             # Advance one row and store the values in a cell
             c[i_row][0] = tech_balancers[iTb]
             c[i_row][1] = tech_names[iTb]

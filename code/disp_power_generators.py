@@ -1,3 +1,4 @@
+# File to dispatch generators
 import numpy as np
 
 def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
@@ -23,31 +24,12 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
 #          2) elec_prices_hourly: float, matrix of hourly prices of the
 #             electricity activities (nH,nAk)
 
-
     # Extract dimensions
     nG = gen_per_elec.shape[0]  # Number of generators
     nAk = gen_per_elec.shape[1]  # Number of electricity activities
     nH = gen_xc_costs_hourly.shape[0]  # Number of hours
 
-    # debugging 
-    # correct
-    # gen_vom_sum = np.sum(gen_vom)
-    # Sum along the rows (axis=0)
-    # incorrect
-    # gen_balance_hourly_sum = np.sum(gen_balance_hourly, axis=0)
-    # correct
-    # prices_hourly_sum = np.sum(prices_hourly, axis=0)
-    # correct
-    # gen_xc_costs_hourly_sum = np.sum(gen_xc_costs_hourly, axis=0)
-
-    # Print the results
-    # print ("Sum of gen_vom:", gen_vom_sum)
-    # print("Sum of gen_balance_hourly across rows:", gen_balance_hourly_sum)
-    # print("Sum of prices_hourly across rows:", prices_hourly_sum)
-    # print("Sum of gen_xc_costs_hourly across rows:", gen_xc_costs_hourly_sum)
-
     # Obtain the hourly marginal costs of the generator
-    # Attention: wrong numbers in second iteration!
     gen_marginal_costs_hourly = np.zeros((nH, nG))  # Preallocate
     for iG in range(nG):
         gen_marginal_costs_hourly[:, iG] = (
@@ -65,16 +47,12 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
         for iAk in range(nAk):
 
             # Define the problem to solve
-            # iG = gen_per_elec[:, iAk].astype(bool)
             mask_gens = gen_per_elec[:, iAk].astype(bool)
-            # Note: demand incorrect for iAk = 7 --> need to check elec_demand_hourly 
             demand = elec_demand_hourly[iH, iAk]
-
             gen_available = np.zeros(nG)
             gen_cost = np.zeros(nG)
             gen_available[mask_gens] = gen_availability_hourly[iH, mask_gens]
             gen_cost[mask_gens] = gen_marginal_costs_hourly[iH, mask_gens]
-
 
             # Obtain merit order
             MOC_order = np.argsort(gen_cost, kind='stable')
@@ -82,10 +60,9 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
 
             # Obtain marginal generator, volume, and price
             MOC_last_gen_indices = np.where(MOC_volume >= demand)[0]
-            if MOC_last_gen_indices.size == 0:
-                # Not enough volume in total => use all + VOLL price
+            if MOC_last_gen_indices.size == 0: # All generators are online
                 voll_true = True
-                MOC_last_gen = nG - 1  # last generator index in 0-based
+                MOC_last_gen = nG - 1 
                 MOC_excess = 0
             else:
                 voll_true = False
@@ -96,6 +73,7 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
             iG_online = MOC_order[: MOC_last_gen + 1]
             iG_marginal = MOC_order[MOC_last_gen]
 
+            # Save dispatch parameters
             if voll_true:
                 elec_prices_hourly[iH, iAk] = voll
             else:
@@ -104,14 +82,5 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
             # Fill dispatch: set all online to full availability, then subtract excess from marginal
             gen_use_hourly[iH, iG_online] = gen_available[iG_online]
             gen_use_hourly[iH, iG_marginal] -= MOC_excess
-
-    # debug
-    # sum_gen_use = np.sum(gen_use_hourly, axis=0)
-    # print("Sum of gen_use_hourly columns:")
-    # print(sum_gen_use)
-    #debug 
-    # sum_elec_prices = np.sum(elec_prices_hourly, axis=0)
-    # print("Sum of elec_prices_hourly columns:")
-    # print(sum_elec_prices)
 
     return gen_use_hourly, elec_prices_hourly

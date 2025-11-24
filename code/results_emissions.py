@@ -1,6 +1,8 @@
+# File to process emission charts
 import numpy as np
 
 def results_emissions(dimensions, types, activities, technologies, results):
+
     # Extract parameters
     nP = dimensions['nP']
     nA = dimensions['nA']
@@ -28,6 +30,7 @@ def results_emissions(dimensions, types, activities, technologies, results):
     emissions_sector_pos = np.zeros((nS, nP))
     emissions_sector_neg = np.zeros((nS, nP))
     for iS, sector in enumerate(sectors):
+        
         # Identify sectoral technologies
         coord_tech = np.array(tech_sector) == sector
         

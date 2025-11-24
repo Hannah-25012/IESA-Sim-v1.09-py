@@ -1,6 +1,5 @@
+# File to write the investments sheet of the general output file
 import pandas as pd
-
-# File to write the output tech stock sheet of the general output file
 
 def write_investments(activities, technologies, writer):
 
@@ -20,8 +19,7 @@ def write_investments(activities, technologies, writer):
     # Build the cell to write
     nP = len(periods)
     nTb = len(tech_balancers)
-    # Create a 2D list (cell array) with dimensions (ntb+1) x (np_+6)
-    c = [[None for _ in range(nP + 6)] for _ in range(nTb + 1)]
+    c = [[None for _ in range(nP + 6)] for _ in range(nTb + 1)] # Create a 2D list (cell array) with dimensions (ntb+1) x (np_+6)
     c[0][0] = 'Technology'
     c[0][1] = 'Name'
     c[0][2] = 'Sector'

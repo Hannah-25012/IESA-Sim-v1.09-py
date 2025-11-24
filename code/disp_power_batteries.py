@@ -1,3 +1,4 @@
+# File to optimize (dispatch) batteries dispatch
 import numpy as np
 
 def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
@@ -23,19 +24,19 @@ def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
 #          2) bat_demand_elec_hourly: float, matrix of hourly electricity demand
 #             per battery (nH,nAk)
 
-
     # Extract dimensions
     nB = len(bat_efficiency)  # Number of battery technologies
     nAk = bat_per_elec.shape[1]
     nH = elec_prices_hourly.shape[0]  # Number of hours
     
-    # Preallocate result arrays
+    # For each battery in the system, we perform a dispatch optimization
     bat_use_hourly = np.zeros((nH, nB))
     bat_demand_elec_hourly = np.zeros((nH, nAk))
     bat_demand = np.zeros((nAk, 1))
     bat_supply = np.zeros((nAk, 1))
     
     for iB in range(nB):
+
         # Define the number of states
         nSt_h = round(bat_volume[iB]) + 1
         nSt_a = 3  # activity dimension (discharging, nothing, charging)
@@ -46,19 +47,20 @@ def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
         vom = bat_vom[iB]
         iAk = bat_per_elec[iB, :].astype(bool)
         
-        # Initialize continuation values matrix
-        cont_values = np.zeros((nH + 1, nSt_h, nSt_a))
+        # % We obtain the matrix of continuation values. The continuation matrix is a cube with an hourly +1 dimension, a
+        # charging levels dimention, and an activity dimension (dischaging, nothing, charging)
+        cont_values = np.zeros((nH + 1, nSt_h, nSt_a)) # Preallocate
         cont_values[nH, 1:nSt_h, :] = -1e6  # Ensure battery ends empty
         cont_values[:, 0, 0] = -1e6  # Avoid discharging while empty
-        cont_values[:, nSt_h - 1, 2] = -1e6  # Avoid charging while full
-        
+        cont_values[:, nSt_h - 1, 2] = -1e6  # Avoid charging while full 
         for iH in range(nH - 1, -1, -1):
+
             # Price calculation
             price = elec_prices_hourly[iH, iAk]
             charge_cashflow = price * charge
             discharge_cashflow = (price - min_spread - vom) * discharge
             
-            # Update continuation values
+            # Update continuation values for each action state
             cont_values[iH, 1:, 0] = np.max(cont_values[iH + 1, :-1, :], axis=1) + discharge_cashflow  # Discharging
             cont_values[iH, :, 1] = np.max(cont_values[iH + 1, :, :], axis=1)  # Nothing
             cont_values[iH, :-1, 2] = np.max(cont_values[iH + 1, 1:, :], axis=1) + charge_cashflow  # Charging
@@ -67,8 +69,8 @@ def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
         iSt_a_vec = np.zeros((nH, 1), dtype=int)
         iSt_h_vec = np.zeros((nH, 1), dtype=int)
         iSt_h = 0  # Start empty
-        
         for iH in range(nH):
+
             # Identify the optimal state per hour
             options_a = cont_values[iH, iSt_h, :]
             sel_opt = len(options_a) - 1 - np.argmax(options_a[::-1])  # Match MATLAB 'last' occurrence
@@ -95,14 +97,4 @@ def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
             bat_use_hourly[iH, iB] = bat_stock[iB] * delta_iSt_h
             bat_demand_elec_hourly[iH, iAk] += demand
 
-    #debug 
-    # sum_bat_use = np.sum(bat_use_hourly, axis=0)
-    # print("Sum of bat_use_hourly columns:")
-    # print(sum_bat_use)
-
-    #debug 
-    # sum_bat_demand_elec = np.sum(bat_demand_elec_hourly, axis=0)
-    # print("Sum of bat_demand_elec_hourly columns:")
-    # print(sum_bat_demand_elec)
-    
     return bat_use_hourly, bat_demand_elec_hourly

@@ -1,7 +1,8 @@
+# File to quantify the energy scarcity
 import numpy as np
 
-
 def disp_energy_scarcity(dimensions, activities, technologies, iP):
+
     # Extract Parameters
     nAe = dimensions['nAe']
     nTb = dimensions['nTb']
@@ -15,13 +16,13 @@ def disp_energy_scarcity(dimensions, activities, technologies, iP):
     tech_stock = technologies['balancers']['stocks']['evolution'][:, iP]
     tech_use = technologies['balancers']['use']['yearly'][:, iP]
 
-    # Begin the loop to quantify the differences between 
+    # Begin the loop to quantify the differences between use and available energy
     energy_scarcity_new = np.zeros((nAe, 1))
     for iTb in range(nTb):
         if tech_categories[iTb] == 'Primary':
+
             # Identify the energy activity which has scarcity
-            # Create boolean arrays to match the corresponding activity names
-            iAe = np.array([name == activity_per_tech[iTb] for name in activities_energy])
+            iAe = np.array([name == activity_per_tech[iTb] for name in activities_energy]) # Create boolean arrays to match the corresponding activity names
             iA = np.array([name == activity_per_tech[iTb] for name in activities_names])
             
             # Quantify the scarcity
@@ -34,7 +35,6 @@ def disp_energy_scarcity(dimensions, activities, technologies, iP):
 
     # Save Variables
     activities['energies']['scarcity'][:, iP] = energy_scarcity + energy_scarcity_new.flatten()
-    
     
     return activities
 

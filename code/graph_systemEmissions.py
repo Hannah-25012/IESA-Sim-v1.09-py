@@ -1,7 +1,7 @@
+# Function to graph the evolution of system emissions
+# CHECK: Have to go over all graphing functions
 import numpy as np
 import matplotlib.pyplot as plt
-
-# Function to graph the evolution of primary energy
 
 def graph_systemEmissions(activities, technologies, results, font_name, font_size):
     

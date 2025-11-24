@@ -1,7 +1,9 @@
+# File to calculate decomissioning in future years based on investments made in the current period
 import numpy as np
 
 def invest_decommissioning(dimensions, activities, technologies, forced_decommissionings,
                           retrofit_sources, retrofit_options, retrofit_potential, tech_stock_exist, iP):
+    
     # Extract parameters
     nP = dimensions['nP']
     nTb = dimensions['nTb']
@@ -30,7 +32,7 @@ def invest_decommissioning(dimensions, activities, technologies, forced_decommis
             to_decommission_still = investments[iTb]
 
             # Decommission technology one by one
-            nOpts = retrofit_options[iTb]
+            nOpts = retrofit_options[iTb] # CHECK: value is not used
             iOpts = 0
             while to_decommission_still > 0:
 
@@ -38,9 +40,7 @@ def invest_decommissioning(dimensions, activities, technologies, forced_decommis
 
                 # Identify the technology to be decommissioned and decommission
                 source_id = retrofit_sources[iTb][iOpts - 1]
-
                 mask = (tech_balancers == source_id)
-                # Defensive check – helps discover data issues early
                 if not np.any(mask):
                     break
                 available_stock = float(tech_stock_exist[mask]) 
@@ -49,7 +49,6 @@ def invest_decommissioning(dimensions, activities, technologies, forced_decommis
                 
 
                 # Save the decision
-                # retrofitting_decommissionings[tech_coord] += to_decommission_now
                 retrofitting_decommissionings[mask] = to_decommission_now
 
     # Adjust the stocks with the new period decommissionings
@@ -62,14 +61,9 @@ def invest_decommissioning(dimensions, activities, technologies, forced_decommis
     # Adjust the decommissioning matrix
     decommissionings[:, iP] += new_decommissionings.flatten()
     for iTb in range(nTb):
-        # debugging:
-        # if iTb == 398:
-        #     print(f"Reached iTb = {iTb}. Press Enter to continue.")
-        #     input()  
 
         # Remove future planned decommissionings due to forwarding
-        # to_remove_still = new_decommissionings[iTb]
-        to_remove_still = float(new_decommissionings[iTb])  # Copy value to avoid modifying original
+        to_remove_still = float(new_decommissionings[iTb]) 
         iP_iter = iP + 1
 
         # Advance period by period until sufficient

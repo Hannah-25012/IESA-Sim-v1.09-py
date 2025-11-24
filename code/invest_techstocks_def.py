@@ -1,3 +1,4 @@
+# File to determine definitive investments in technologies for the current period
 import numpy as np
 
 def invest_techstocks_def(dimensions, technologies, tech_stock_original, preliminary_investments, report_yes, iP):
@@ -23,6 +24,7 @@ def invest_techstocks_def(dimensions, technologies, tech_stock_original, prelimi
 
     # Force all technologies to fall within min and max limits
     for iTb in range(nTb):
+
         # Determine allowed stock
         tech_stock_new[iTb,0] = min(max(tech_stock_min[iTb], tech_stock[iTb]), tech_stock_max[iTb])
 
@@ -45,13 +47,16 @@ def invest_techstocks_def(dimensions, technologies, tech_stock_original, prelimi
     # Make all primary energy equal to tech stock max (it does not reflect on investments)
     primary_decommissionings = np.zeros((nTb,1))  # Preallocate
     for iTb in range(nTb):
+
         if 'Primary' in tech_categories[iTb]:
             tech_stock[iTb] = tech_stock_max[iTb]
             primary_decommissionings[iTb] = tech_stock_max[iTb]
+
         elif 'Emission' in tech_categories[iTb]:
             if inv_cost[iTb] == 0:
                 tech_stock[iTb] = tech_stock_max[iTb]
                 primary_decommissionings[iTb] = tech_stock_max[iTb]
+                
             if 'Emission' in tech_sector[iTb]:
                 tech_stock[iTb] = 5000
                 primary_decommissionings[iTb] = 5000

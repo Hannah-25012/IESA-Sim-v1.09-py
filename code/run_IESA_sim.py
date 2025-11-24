@@ -10,12 +10,10 @@ version_number = "1.09"
 # Welcome message
 print(f"Welcome to IESA-Sim v{version_number}")
 
-
 # Read the settings
 settings = settings_read(version_number)
 print("Retrieved Settings:")
 print(json.dumps(settings, indent=4))
-
 
 # Run IESA-Sim
 main(settings)

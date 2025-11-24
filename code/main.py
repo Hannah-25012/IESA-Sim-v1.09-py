@@ -1,3 +1,4 @@
+# Main file from which all modules are called sequentially
 import time
 import os
 import pickle
@@ -10,6 +11,7 @@ from mod4_postprocessing import mod4_postprocessing
 from mod5_results import mod5_results
 
 def main(settings):
+
     # Record start time
     t_start = time.perf_counter()
 
@@ -25,13 +27,15 @@ def main(settings):
     plot_price_duration = settings['plot_price_duration']
     print("Settings were successfully implemented")
 
-    # Read the data
+    # Read the data from excel input file
     if read_input is True:
         print(f"Reading the excel file {input_file} ...")
         parameters, types, activities, profiles, technologies, agents, policies = mod0_read_data(input_file)
         print("The input data was retrieved successfully from the excel file")
+    
+    # Load data from previously saved .pkl or .mat file
     else:
-        # The following part of code loads data from .mat file (if we want to ensure compatibility with matlab)
+        # Note: The commented-out part of code loads data from .mat file (if we want to ensure compatibility with matlab)
         # from scipy.io import loadmat
         # data = loadmat('input/data.mat')
         # parameters = data['parameters']
@@ -42,7 +46,6 @@ def main(settings):
         # agents = data['agents']
         # policies = data['policies']
         # print("The input data was successfully loaded from .mat file")
-
 
         with open('data.pkl', 'rb') as file:
             data = pickle.load(file)
@@ -65,7 +68,7 @@ def main(settings):
     print("Initialization complete.")
     print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
-    # Begin the sequential solution on all periods
+    # Begin the sequential running of modules for all periods
     print("Simulation is on...")
     periods = activities['periods']
     n_periods = sum(year_end >= periods)
@@ -96,6 +99,7 @@ def main(settings):
         )
         print("-Parameters postprocessed.")
 
+        # Message for finalized period
         print(f"Period {periods[iP]} was finalized.")
         print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
@@ -108,7 +112,7 @@ def main(settings):
     )
     print("Results generated successfully.")
 
-    # Save output to .mat file (if interaction with matlab is desired)
+    # Note: The commented-out part saves output to .mat file (if interaction with matlab is desired)
     # if save_output:
     #     output_file = os.path.join(output_path, '_variables.mat')
     #     from scipy.io import savemat
@@ -123,12 +127,10 @@ def main(settings):
     #     })
     #     print(f"Output saved to {output_file}")
 
-
     # Save output to .pkl file (better if the code runs only in Python)
     if save_output:
         output_file = Path(output_path) / 'simulation_results.pkl'
         output_file.parent.mkdir(parents=True, exist_ok=True)
-
         with open(output_file, 'wb') as file:
             pickle.dump({
                 'dimensions': dimensions,

@@ -1,5 +1,4 @@
-# Attention: This module is only called from the second period onwards, so still needs to be debugged.
-
+# File to determine investments into power technologies
 import numpy as np
 
 def invest_power_technologies(dimensions, parameters, activities, technologies, agents, tech_stock_exist, iP):
@@ -35,10 +34,8 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
     # Identify the choice per activity and agent type
     iMC3 = np.where(np.array(multi_criteria_categories) == 'Cost performance')[0][0]
 
-    # Preallocate new investments
-    new_investments = np.zeros((nTb,1))
-
     # Loop through all technologies
+    new_investments = np.zeros((nTb,1)) # Preallocate new investments
     for iTb in range(nTb):
 
         # Identify if the main activity of the technology is electricity generation
@@ -46,7 +43,8 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
 
         if np.sum(np.array(activity_label)[act_coord] == 'Electricity') == 1 and inv_cost[iTb] > 0:
 
-            # Check conditions for capture rates and capacity factors
+            # Activate the volumes accordingly with the quality of their capture rates and capacity factors. If capacity factors are above a threshold and
+            # capture rates satisfy a minimum then activate. If capture rates are above a threshold and capacity factors satisfy a minimum then activate.
             condition_1 = generator_capt_rate[iTb] >= powinv_CR_threshold and generator_norm_ut_fact[iTb] >= powinv_NUF_min
             condition_2 = generator_norm_ut_fact[iTb] >= powinv_NUF_threshold and generator_capt_rate[iTb] >= powinv_CR_min
 
@@ -63,17 +61,22 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
                 # Check if the technology meets the investors' appetite
                 if powinv_SPBT_iTb <= powinv_SPBT_min:
 
-                    # Determine potential volume ranges for investments
+                    # Determine potential volume ranges for investments accordingly with 1GW to max(1GW,max investment)
                     range_min = 1  # GW
                     range_max = max(1, tech_stock_deploy[iTb])
                     potential_range = range_max - range_min
 
-                    # Recalculate economic performance based on SPBT
+                    # The point in the range will be determined by the actors preferences
+                    # A) We recalculate economic performance based on SPBT:
+                    # SPBT <= benchmark =1, SPBT >= min = 0
                     multi_criteria_generator = multi_criteria_performance_tech[iTb, :].copy()
                     powinv_spbt = 1 - (powinv_SPBT_iTb - powinv_SPBT_benchmark) / (powinv_SPBT_min - powinv_SPBT_benchmark)
                     multi_criteria_generator[iMC3] = max(min(1, powinv_spbt), 0)
 
-                    # Use the multi_criteria_performance matrix to get an indicator for each technology and actor
+                    # B) We use the multiCriteria_performance matrix to obtain an indicator from 0 to 1 for each technology and actor, we then multiply
+                    # by the range and its population fraction
+                    
+                    # Identify population vector of agent type based on agent profile 
                     coord_agent_profile = np.array(activity_agent)[act_coord] == np.array(agent_profiles)
                     population_vector = agents_populations[coord_agent_profile, :].flatten()
                     population_vector = population_vector / np.sum(population_vector)

@@ -1,10 +1,13 @@
+# File to read setting from JSON settings file
 import json
 import os
 
 def settings_read(version_number):
-    # Read settings from the JSON settings file
+
+    # Define file name
     json_settings_file = f'IESA_settings_v{version_number}.json'
     
+    # Read file
     with open(json_settings_file, 'r') as file:
         json_settings_str = file.read()
     

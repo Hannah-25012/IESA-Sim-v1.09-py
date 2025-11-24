@@ -1,6 +1,8 @@
+# File to write the hourly gas prices
 import pandas as pd
 
 def write_hourly_gas_prices(activities, output_name):
+
     # Extract Parameters
     periods = activities['periods']
     activities_emission = activities['emissions']['names']
@@ -15,8 +17,7 @@ def write_hourly_gas_prices(activities, output_name):
     nP = len(periods)
     nAg = len(activities_gaseous)
     nH = prices_hourly.shape[0]
-    # Create an empty cell matrix with dimensions (nH+2) x (nP*nAg+1)
-    num_rows = nH + 2
+    num_rows = nH + 2  # Create an empty cell matrix with dimensions (nH+2) x (nP*nAg+1)
     num_cols = nP * nAg + 1
     c = [[None for _ in range(num_cols)] for _ in range(num_rows)]
 
@@ -31,13 +32,13 @@ def write_hourly_gas_prices(activities, output_name):
 
     # Fix the content
     content_col_index = 0
-    # Fill the first column with hour numbers
-    for h in range(nH):
+    for h in range(nH): # Fill the first column with hour numbers
         c[h + 2][0] = h + 1
 
     for iAg in range(nAg):
         for iP in range(nP):
             content_col_index += 1
+
             # Correct units if it's energy
             if activities_gaseous[iAg] in activities_emission:
                 corr_units = 1

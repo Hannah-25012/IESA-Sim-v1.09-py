@@ -1,3 +1,4 @@
+# File to determine the LCOPs of technologies
 import numpy as np
 
 def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_potential, retrofit_cost, iP):
@@ -11,7 +12,6 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
     activity_type_act = activities['types']
     activities_energy = activities['energies']['names']
     activities_elec = activities['electricity']['names']
-    
     if iP == 0:
         energy_prices = activities['energies']['prices']['initialized']
         emission_prices = activities['emissions']['prices']['initialized']
@@ -19,7 +19,6 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
         energy_prices = activities['energies']['prices']['yearly'][:, iP - 1]
         emission_prices = activities['emissions']['prices']['yearly'][:, iP - 1]
         energy_prices_ranges = activities['energies']['prices']['ranges'][:, :, iP - 1]
-    
     price_ranges = activities['energies']['prices']['price_ranges']
     activity_per_tech = technologies['balancers']['activities']
     activity_balances = technologies['balancers']['activity_balances']
@@ -44,10 +43,9 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
     iAc = np.array(activity_type_act) == 'Emission'
     iAe = np.logical_or(np.array(activity_type_act) == 'Energy', np.array(activity_type_act) == 'Fix Energy')
 
-    # Preallocate arrays
-    tech_lcops = np.zeros(nTb)
+    # Do a loop on all technologies to obtain their LCOPs
+    tech_lcops = np.zeros(nTb) # Preallocate arrays
     tech_lcops_matrix = np.zeros((nTb, nTL))
-
     for iTb in range(nTb):
 
         # Modify the vector included for the activity balance
@@ -96,31 +94,42 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
 
         # Adjust for feed-in subsidies
         if feedin_subject[iTb]:
+
+            # First modify the main activity
             coord_feedin_act = np.array(feedin_activities) == activity_per_tech[iTb]
             if np.sum(coord_feedin_act) > 0:
                 feedin_values_array = np.array(feedin_values)
                 feedin_effect = feedin_values_array[coord_feedin_act, iP]
                 vom_adjusted -= feedin_effect
 
-            # Adjust other activities
+            # Then adjust other activities
             activity_balance_vector = technology_balance > 0
             activity_balance_coord = np.where(activity_balance_vector)[0]
             nAB = np.sum(activity_balance_vector)
             if nAB > 0:
                 for iAB in range(nAB):
+                    
+                    # Identify the activity
                     iA_cogen = activity_balance_coord[iAB]
+
+                    # Identify if there is a subsidy for this activity
                     coord_feedin_act = np.array(feedin_activities) == activities_names[iA_cogen]
                     if np.sum(coord_feedin_act) > 0:
                         feedin_effect = feedin_values[coord_feedin_act, iP] * technology_balance[iA_cogen]
                         vom_adjusted -= feedin_effect
 
         # Adjust for taxes (emissions only)
+        # Identify activities being used
         activity_balance_vector = (technology_balance < 0) & iAc
         activity_balance_coord = np.where(activity_balance_vector)[0]
         nAB = np.sum(activity_balance_vector)
         if nAB > 0:
             for iAB in range(nAB):
+
+                # Identify the activity
                 iA_fuel = activity_balance_coord[iAB]
+
+                # Identify if there is a tax for this activity
                 coord_taxes_act = np.array(taxes_activities) == activities_names[iA_fuel]
                 if np.sum(coord_taxes_act) > 0:
                     taxes_values_array = np.array(taxes_values)
@@ -152,7 +161,6 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
 
     # Save the variables
     technologies['balancers']['lcops']['values'][:, iP] = tech_lcops
-    # Attention: Values are correct, but sometimes the tech_lcops_matrix contains "-0". I'm not sure if this is a problem...
     technologies['balancers']['lcops']['matrix'][:, :, iP] = tech_lcops_matrix
 
     return technologies

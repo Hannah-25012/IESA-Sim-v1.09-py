@@ -1,7 +1,10 @@
+# Function to graph sectoral emissions
+# CHECK: Have to go over all of the graphing functions
 import numpy as np
 import matplotlib.pyplot as plt
 
 def graph_sectoralEmissions(activities, types, results, font_name, font_size, color_code):
+
     # Extract parameters
     periods = activities['periods']
     sectors = types['sectors']
@@ -38,15 +41,14 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
     
     # Append emissions_stored to y1
     y1 = np.vstack([y1, emissions_stored])
-    
     lbl = ordered_labels.copy()
     lbl.append('Stored CO_2')
     lbl.append('Total Emissions')
     lbl.append('Total CO_2')
     
-    # Creating the graph
+    # Creating the graph (plot y1 and y2 as stacked bars)
+    # y1
     _ , ax = plt.subplots()
-    # Plot y1 as stacked bars
     bars_a = []
     bottom = np.zeros_like(periods, dtype=float)
     for i in range(y1.shape[0]):
@@ -54,11 +56,10 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
         bars_a.append(bar_container)
         bottom = bottom + y1[i, :]
     
-    # Plot the two lines
-    ax.plot(periods, np.sum(y1, axis=0) + np.sum(y2, axis=0) - emissions_stored, 'k', linewidth=2)
+    ax.plot(periods, np.sum(y1, axis=0) + np.sum(y2, axis=0) - emissions_stored, 'k', linewidth=2) # Plot the two lines
     ax.plot(periods, np.sum(y1, axis=0) + np.sum(y2, axis=0), '--k', linewidth=2)
     
-    # Plot y2 as stacked bars
+   # y2
     bars_b = []
     bottom = np.zeros_like(periods, dtype=float)
     for i in range(y2.shape[0]):
@@ -87,8 +88,7 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
     ax.spines['right'].set_visible(False)
     
     # Coloring section
-    # For bars_a (the first stacked bar plot)
-    # MATLAB indexing: a(1) -> bars_a[0] gets color_code(12,:) => Python: color_code[11], etc.
+    # For bars_a (y1)
     a_colors = [color_code[11], color_code[9], color_code[5], color_code[2],
                 color_code[0], color_code[10], color_code[12], color_code[1],
                 color_code[7], color_code[14], color_code[15], color_code[4],
@@ -99,7 +99,7 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
             if i == 13:  # the 14th element, set alpha to 0.5
                 rect.set_alpha(0.5)
     
-    # For bars_b (the second stacked bar plot)
+    # For bars_b (y2)
     b_colors = [color_code[11], color_code[9], color_code[5], color_code[2],
                 color_code[0], color_code[10], color_code[12], color_code[1],
                 color_code[7], color_code[14], color_code[15], color_code[4],
