@@ -1,7 +1,5 @@
 # Determine the investment potential per technology
-# Attention: Verify that the variables tech_stock_deploy and retrofit_potential are 1-dimensional arrays (and not 2-dimensional)
-# Attention: the logic of the code seems to prioritize deployment first, then retrofitting. Also, I don't exactly understand what happens with room_to_invest if retrofit option is chosen. Check for-loop again.
-
+# THINK: the logic of the code seems to prioritize deployment first, then retrofitting. Also, I don't exactly understand what happens with room_to_invest if retrofit option is chosen
 import numpy as np
 
 def invest_investment_potential(dimensions, technologies, tech_stock_exist, retrofit_potential, ip):
@@ -14,6 +12,7 @@ def invest_investment_potential(dimensions, technologies, tech_stock_exist, retr
     # Obtain investment potentials
     investment_potential = np.zeros(nTb)  # Preallocate
     for iTb in range(nTb):
+        
         # Obtain the raw room to invest
         room_to_invest = tech_stock_max[iTb] - tech_stock_exist[iTb]
 

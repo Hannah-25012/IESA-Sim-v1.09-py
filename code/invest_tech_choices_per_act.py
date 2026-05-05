@@ -1,6 +1,8 @@
+# File to determine actors' technology choices
 import numpy as np
 
 def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP):
+
     # Extract parameters
     nA = dimensions['nA']
     nTb = dimensions['nTb']
@@ -17,14 +19,14 @@ def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP
     agents_populations = agents['populations']
     tech_choices_LCOP_order = technologies['balancers']['choices_lcop_order']
 
-    # Add a large cost to buffer technologies
+    # Add a large cost to buffer technologies (to make them unattractive and thereby not chosen)
     coord_buffer = np.array([dt == 'Gas buffer' for dt in dispatch_type_tech])
     tech_LCOPs[coord_buffer] += 1e6
 
-    # Initialize LCOP order choices
+    # Identify choice per activity and agent type
     tech_choices_LCOP_order = np.zeros(nTb, dtype=int)
-
     for iA in range(nA):
+        
         # Identify technologies that satisfy the activity
         coord_tech_act = np.array([activities_names[iA] == act for act in activity_per_tech])
         idxs = np.nonzero(coord_tech_act)[0]
@@ -42,45 +44,56 @@ def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP
         # Identify non-buffer technologies
         coord_tech_opr = ~coord_buffer
 
-        # Identify population vector based on agent profiles
+        # Identify population vector of agent types based on agent profiles
         coord_agentprofile = np.array([activity_agent[iA] == ap for ap in agent_profiles])
         population_vector = agents_populations[coord_agentprofile, :].flatten()
 
-        # Check for main technologies
+        # Check that the activity has main technologies
         coord_tech = coord_tech_act & coord_tech_opr
         nT = np.sum(coord_tech)
+
         if nT == 0:
             print(f"--****There is no main technology for activity: {activities_names[iA]}")
+
         elif nT == 1:
             tech_choices_agent[coord_tech, :] = population_vector
+
         else:
+
             # Extract multicriteria of technologies
             multicriteria_matrix = multi_criteria_performance_tech[coord_tech, :]
 
             # Multi-criteria valuation per agent type
             multicriteria_valuation = np.zeros((nT, nAT))
+
             for iAT in range(nAT):
+
                 multicriteria_valuation[:, iAT] = np.sum(
                     multicriteria_matrix * weights_multicriteria[:, iAT], axis=1
                 )
                 coord_max = multicriteria_valuation[:, iAT] == np.max(multicriteria_valuation[:, iAT])
                 nT_max = np.sum(coord_max)
                 tech_choices_inter = np.zeros(nT)
+
+                # If there are multiple best technologies, check for better LCOP or better environmental footprint
+                # THINK: This prioritises costs first and then CO2. Social and complexity not considered
                 if nT_max > 1:
                     multicriteria_CO2 = multicriteria_matrix[coord_max, 1]
                     multicriteria_LCOP = multicriteria_matrix[coord_max, 2]
-                    # Better LCOP
+
+                    # Choose better LCOP
                     coord_LCOP = multicriteria_LCOP == np.max(multicriteria_LCOP)
                     nT_LCOP = np.sum(coord_LCOP)
                     tech_choices_inter_inter = np.zeros(nT_max)
+
+                    # If more than one with better LCOP, choose better environmental footprint
                     if nT_LCOP > 1:
                         multicriteria_CO2 = multicriteria_CO2[coord_LCOP]
-                        # Better environmental footprint
                         coord_CO2 = multicriteria_CO2 == np.max(multicriteria_CO2)
                         nT_CO2 = np.sum(coord_CO2)
                         tech_choices_inter_inter_inter = np.zeros(nT_LCOP)
                         # Proportional
-                        # Note: What does proportional mean here?
+                        # UNDERSTAND: What does proportional mean here?
                         tech_choices_inter_inter_inter[coord_CO2] = (
                             population_vector[iAT] / nT_CO2
                         )

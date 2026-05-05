@@ -1,7 +1,10 @@
+# Function to graph the evollution of system costs
+# CHECK: Have to go over all graphing functions
 import numpy as np
 import matplotlib.pyplot as plt
 
 def graph_systemCosts(activities, results, font_name, font_size, color_code):
+
     # Export Parameters
     periods = activities['periods']
     cost_categories = results['costs']['categories']
@@ -9,9 +12,6 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
 
     # Order the graph
     ordered_label = cost_categories
-
-    # Clean the nans (if there are any for test runs)
-    # system_costs[np.isnan(system_costs)] = 0  # Clean NaNs if any
 
     # Preparing the graph
     system_costspos = system_costs.copy()
@@ -24,7 +24,6 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
 
     # Creating the graph
     plt.figure()
-    # "hold on" is implicit in matplotlib
 
     # Plot positive bars with stacking
     a = []
@@ -52,7 +51,6 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
 
     plt.ylabel('system costs [B€/y]', fontname=font_name, fontsize=font_size)
     plt.ylim([-150, 250])
-    # "hold off" is implicit when plotting is complete
 
     # Formatting section
     ax = plt.gca()
@@ -60,15 +58,12 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
     plt.xticks(periods, periods, rotation=0, fontname=font_name, fontsize=font_size)
     plt.xlim(2015, 2055)
     plt.yticks(fontname=font_name, fontsize=font_size)
-    # Always display legend (if true)
     plt.legend(lbl, prop={'family': font_name, 'size': 12}, ncol=3)
-    # Remove top and right box borders
-    ax.spines['top'].set_visible(False)
+    ax.spines['top'].set_visible(False) # Remove top and right box borders
     ax.spines['right'].set_visible(False)
 
     # Coloring section
-    # Mapping: MATLAB indices [2, 8, 6, 9, 11, 4] become Python indices [1, 7, 5, 8, 10, 3]
-    mapping = [1, 7, 5, 8, 10, 3]
+    mapping = [1, 7, 5, 8, 10, 3] # MATLAB indices [2, 8, 6, 9, 11, 4] become Python indices [1, 7, 5, 8, 10, 3]
     for i, container in enumerate(a):
         for patch in container.patches:
             patch.set_facecolor(color_code[mapping[i]])
@@ -76,5 +71,4 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
         for patch in container.patches:
             patch.set_facecolor(color_code[mapping[i]])
 
-    # (Optionally, show the plot or return the figure/axes)
     plt.show(block=False)

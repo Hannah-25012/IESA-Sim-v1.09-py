@@ -1,6 +1,8 @@
+# File to obtain the system costs of the energy transition
 import numpy as np
 
 def results_system_costs(dimensions, parameters, activities, technologies, results):
+
     # Extract parameters
     nP = dimensions['nP']
     nTb = dimensions['nTb']
@@ -31,9 +33,14 @@ def results_system_costs(dimensions, parameters, activities, technologies, resul
     # Capital costs
     cost_coord = np.array(cost_categories) == 'capital'
     for iP in range(nP):
+
+        # CHECK: Note of Manuel - % Simple definition based on stocks and current overnight costs
+        # (although not the most accurate definition, it allows for a better comparisson against IESA-Opt) for the prev definition: v1.08
+
         # Include Balancing technologies
         for iTb in range(nTb):
             system_costs[cost_coord, iP] += annuity_fact[iTb] * tech_stock[iTb, iP] * inv_cost[iTb, iP]
+            
         # Include Infrastructure technologies
         for iTi in range(nTi):
             system_costs[cost_coord, iP] += annuity_fact_infra[iTi] * tech_stock_infra[iTi, iP] * inv_cost_infra[iTi, iP]

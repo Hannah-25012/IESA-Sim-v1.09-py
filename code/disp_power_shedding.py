@@ -1,3 +1,4 @@
+# File to dispatch shedding technologies
 import numpy as np
 
 def disp_power_shedding(shed_guarantee, shed_maxvolume_hourly, 
@@ -22,21 +23,16 @@ def disp_power_shedding(shed_guarantee, shed_maxvolume_hourly,
 #          1) shed_use_hourly: float, matrix of hourly use per shedding
 #             technology (nH,nS)
 
-
     # Extract dimensions
     nS = len(shed_guarantee)  # Number of shedding technologies
     nH = elec_prices_hourly.shape[0]  # Number of hours
 
-    # Initialize the result matrix
+    # For each tecnology, obtain the most profitable hours to operate in a year
     shed_use_hourly = np.zeros((nH, nS))
-
-    # Loop through each shedding technology
     for iS in range(nS):
     
-        # find which electricity-activity columns the technology uses
+        # Identify the prices vector of the technology
         cols = np.where(shed_per_elec[iS, :].astype(bool))[0]
-
-        # build a 1D price vector and order the hours of preference
         if len(cols) == 1:
             prices_vector = elec_prices_hourly[:, cols[0]]
             prices_order   = np.argsort(prices_vector, kind='stable')
@@ -58,6 +54,5 @@ def disp_power_shedding(shed_guarantee, shed_maxvolume_hourly,
         cumsum_volume = np.cumsum(flex_volume[prices_order])
         last_on = np.searchsorted(cumsum_volume, flex_target, side='left')
         shed_use_hourly[prices_order[:last_on + 1], iS] = 1
-
 
     return shed_use_hourly

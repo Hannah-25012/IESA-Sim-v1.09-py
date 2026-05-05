@@ -1,7 +1,9 @@
+# File to write the sectoral balance sheet
 import numpy as np
 import pandas as pd
 
 def write_sector_balance(types, activities, technologies, writer):
+    
     # Extract Parameters
     energy_labels = types['energy']['labels']
     periods = activities['periods']
@@ -31,20 +33,16 @@ def write_sector_balance(types, activities, technologies, writer):
     rows = 2 + nS * nEL
     cols = 2 + 2 * nP
     C = [[None for _ in range(cols)] for _ in range(rows)]
-    
-    # Header row 1 (Matlab row 1 -> Python index 0)
-    C[0][2] = "Consumption"
+    C[0][2] = "Consumption" # Header row 1 (Matlab row 1 -> Python index 0)
     C[0][2 + nP] = "Production"
-    
-    # Header row 2 (Matlab row 2 -> Python index 1)
-    C[1][0] = "Sector"
+    C[1][0] = "Sector" # Header row 2 (Matlab row 2 -> Python index 1)
     C[1][1] = "Carrier"
     C[1][2:2 + nP] = list(periods[:nP])
     C[1][nP + 2:2 * nP + 2] = list(periods[:nP])
-    
     iR = 2  # Starting row for data (Matlab row 3 -> Python index 2)
     for s in sectors:
         for el in energy_labels:
+            
             # Identify the coordinates
             tech_coord = np.logical_and(coord_categories, np.array(tech_sector) == s)
             act_coord = np.array(activity_label) == el

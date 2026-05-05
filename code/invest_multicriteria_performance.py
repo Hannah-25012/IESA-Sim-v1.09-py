@@ -1,6 +1,8 @@
+# File to determine the multi-criteria performance of technologies
 import numpy as np
 
 def invest_multicriteria_performance(dimensions, activities, technologies, agents, iP):
+
     # Extract parameters
     nA = dimensions['nA']
     nTb = dimensions['nTb']
@@ -25,11 +27,10 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
     # Identify emissions coordinates
     iAc = [i for i, t in enumerate(activity_types) if t == 'Emission']
 
-    # Preallocate emissions
-    emissions = np.zeros(nTb)
-
-    # Calculate indexes for each parameter
+    # Do a loop for all technologies to calculate their multi-criteria performance
+    emissions = np.zeros(nTb) # Preallocate emissions
     for iTb in range(nTb):
+
         # Extract the balance of the technology
         technology_balance = np.copy(activity_balances[iTb, :])
         technology_balance[activities_names.index(activity_per_tech[iTb])] = 0
@@ -55,6 +56,7 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
 
     # Identify emission and LCOP ranges for all technologies with the same main activity
     for iA in range(nA):
+
         # Identify competing technologies
         icoord = [i for i, act in enumerate(activity_per_tech) if act == activities_names[iA]]
 
@@ -63,6 +65,7 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
         icoord = [i for i, valid in zip(icoord, no_buffer_coord) if valid]
 
         if len(icoord) > 0:
+
             # Identify vectors of emissions and LCOPs
             emissions_vec = emissions[icoord]
             LCOP_vec = tech_LCOPs[icoord]
@@ -71,9 +74,6 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
             LCOP_min = np.min(LCOP_vec)
             LCOP_max = LCOP_min + 0.5 * abs(LCOP_min) + 1e-6
             emissions_min = np.min(emissions_vec)
-            # Attention: Matlab takes only the first element of emissions_vec (not the maximum of the vector) and then compares to 0. 
-            # To match this (for comparison), we need to remove np.max
-            # emissions_max = max(np.max(emissions_vec), 0) + 1e-6
             emissions_max = max(emissions_vec[0], 0) + 1e-6
 
             # Calculate the decreasing linear functions from 1 to 0
@@ -81,7 +81,6 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
             multicriteria_performance_tech[icoord, iMC2] = 1 - (
                 (emissions_vec - emissions_min) / (emissions_max - emissions_min)
             )
-
             # For LCOPs
             multicriteria_performance_tech[icoord, iMC3] = 1 - (
                 (LCOP_vec - LCOP_min) / (LCOP_max - LCOP_min)
@@ -92,7 +91,7 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
         multicriteria_performance_tech[:, [iMC2, iMC3]], 0
     )
 
-    # Save the multi-criteria analysis matrix
+    # Save the multi-criteria performance matrix
     technologies['balancers']['mca']['matrix'][:, :, iP] = multicriteria_performance_tech
 
     return technologies

@@ -1,6 +1,8 @@
+# File to write system emissions
 import pandas as pd
 
 def write_system_emisisons(activities, results, writer):
+
     # Export Parameters
     periods = activities['periods']
     emissions = results['emissions']

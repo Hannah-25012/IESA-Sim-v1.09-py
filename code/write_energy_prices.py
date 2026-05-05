@@ -1,6 +1,8 @@
+# File to write the energy prices sheet
 import pandas as pd
 
 def write_energy_prices(activities, writer):
+    
     # Extract Parameters
     periods = activities['periods']
     activities_energy = activities['energies']['names']

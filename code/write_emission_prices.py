@@ -1,7 +1,7 @@
+# File to write the emission prices sheet
 import pandas as pd
 
 def write_emission_prices(activities, writer):
-    # File to write the output tech stock sheet of the general output file
 
     # Extract Parameters
     periods = activities['periods']

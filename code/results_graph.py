@@ -1,32 +1,26 @@
+# Function to call the different graphing routines of the model
 from graph_primaryEnergy import graph_primaryEnergy
 from graph_systemEmissions import graph_systemEmissions
 from graph_systemCosts import graph_systemCosts
 from graph_sectoralEmissions import graph_sectoralEmissions
 from graph_policyCashflows import graph_policyCashflows
 from graph_priceDuration import graph_priceDuration
-
-
 import numpy as np
 import matplotlib as mpl
 
-
 def results_graph(dimensions, types, activities, technologies, results, plot_price_duration):
-    # Unify the format and colors
+
+    # === Unify the format and colors ===
     # Plot format
-    
     font_name = 'DejaVu Sans'
     font_size = 12
     
     mpl.rcParams.update({
-        'font.family': 'DejaVu Sans',
-        'font.size': 12,
+        'font.family': font_name,
+        'font.size': font_size,
     })
-    # font_name = 'Helvetica'
-    # font_size = 12
-
+    
     # Color code
-    # In Matlab, zeros(13,3) is used but then rows 14-18 are added.
-    # Here we initialize an array with 18 rows to accommodate all entries.
     color_code = np.zeros((18, 3))
     color_code[0, :] = [0.0, 0.0, 0.0]   # Black
     color_code[1, :] = [0.3, 0.3, 0.3]   # Gray dark
@@ -46,9 +40,8 @@ def results_graph(dimensions, types, activities, technologies, results, plot_pri
     color_code[15, :] = [0.6, 0.0, 0.0]  # Dark Red
     color_code[16, :] = [0.8, 0.0, 0.8]  # Fuschia
     color_code[17, :] = [0.6, 0.8, 0.1]  # Lime
-    # Contrasting color order
-    # contrast_order = [10, 16, 6, 4, 11, 15, 13, 1, 8, 9, 2, 17, 2, 12, 3, 7, 5]
 
+    # === Call the different graphing routines ===
     # Graph the primary energy balance
     print("--Graphing the primary energy balance...")
     graph_primaryEnergy(dimensions, types, activities, results, font_name, font_size, color_code)

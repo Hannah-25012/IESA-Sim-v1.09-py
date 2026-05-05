@@ -1,5 +1,5 @@
+# File to determine the power dispatch
 import numpy as np
-
 from disp_initialize_power import disp_initialize_power
 from disp_power_generators import disp_power_generators
 from disp_power_shedding import disp_power_shedding
@@ -8,6 +8,7 @@ from disp_power_batteries import disp_power_batteries
 from disp_power_interconnectors import disp_power_interconnectors
 
 def disp_power(dimensions, parameters, activities, technologies, profiles, tech_use_hourly, prices_hourly, iP, nId):
+
     # Extract parameters
     nDy = dimensions['nDy']
     nHd = dimensions['nHd']
@@ -22,7 +23,6 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
     # Initialize power dispatch
     if nId:
         print('---Initializing power dispatch...')
-
     (
         gen_vom, gen_balance_hourly, gen_availability_hourly,
         gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly,
@@ -49,6 +49,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
     # Begin the iterative loop
     elec_demand_hourly_new = elec_demand_hourly.copy()
     for iIp in range(nIp):
+
         # Dispatch generators
         gen_use_hourly, elec_prices_hourly = disp_power_generators(
             gen_vom, gen_balance_hourly, gen_availability_hourly,
@@ -56,7 +57,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
             prices_hourly, voll
         )
 
-        # Display iteration info
+        # Display iteration info for the last balancing loop
         if nId:
             print(f"{iIp:6d} {'Price':10}", end='')
             for iAk in range(nAk):
@@ -96,18 +97,17 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
 
         # Adjust demand for each electricity activity
         for iAk in range(nAk):
-            # Identify technologies in the node
+
+            # Identify shedding technologies and interconnectors in the node
             is_shedding = shed_per_elec[:, iAk]
             is_loadshifts = loadshifts_per_elec[:, iAk]
             is_interconnect_from = np.sum(xc_per_elec[:, iAk, :], axis=0).T[:, None].astype(bool)
             is_interconnect_to = np.sum(xc_per_elec[iAk, :, :], axis=0).T[:, None].astype(bool)
 
-
-
             # Add base demand
             elec_demand_hourly_new[:, iAk] = elec_demand_hourly[:, iAk]
 
-            # Add shedding technology demand
+            # Add demand of all shedding technologies
             if np.sum(tech_shedding_coord) > 0:  # Check if there are any active shedding technologies
                 elec_demand_hourly_new[:, iAk] += np.sum(
                     shed_mindemand_hourly[:, is_shedding] +
@@ -117,7 +117,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
                     axis=1  # Sum along rows (equivalent to MATLAB's sum(..., 2))
                 )
 
-            # Add load-shifting demand
+            # Add shifting technology demand
             if sum(tech_loadshifts_coord) > 0:
                 elec_demand_hourly_new[:, iAk] += loadshifts_demand_hourly[:, is_loadshifts].sum(axis=1)
 
@@ -137,9 +137,11 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         print('---End of the power dispatch iterations.')
 
     # Save the variables
+    # prices_hourly
     activities_elec_coord = [label == 'Electricity' for label in activities_label]
     prices_hourly[:, activities_elec_coord] = elec_prices_hourly
 
+    # tech_use_hourly
     tech_use_hourly[:, tech_generators_coord] = gen_use_hourly
 
     if sum(tech_shedding_coord):
@@ -161,14 +163,5 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         tech_use_hourly[:, tech_batteries_coord] = bat_use_hourly
 
     tech_use_hourly[:, tech_interconnectors_coord] = xc_demand * xc_use_hourly
-
-    # debugging 
-    # Sum along the rows (axis=0)
-    # tech_use_sum = np.sum(tech_use_hourly, axis=0)
-    # prices_sum = np.sum(prices_hourly, axis=0)
-
-    # Print the results
-    # print("Sum of tech_use_hourly across rows:", tech_use_sum)
-    # print("Sum of prices_hourly across rows:", prices_sum)
 
     return tech_use_hourly, prices_hourly

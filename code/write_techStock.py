@@ -1,6 +1,8 @@
+# File to write the output tech stock sheet of the general output file
 import pandas as pd
 
 def write_techStock(activities, technologies, writer):
+    
     # Extract parameters
     periods = activities['periods']
     tech_balancers = technologies['balancers']['ids']

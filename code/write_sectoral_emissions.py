@@ -1,7 +1,7 @@
+# File to write sectoral emissions
 import pandas as pd
 
-def write_sectoral_emissions(activities, types, results, writer):
-    # File to write sectoral emissions
+def write_sectoral_emissions(activities, types, results, writer): 
 
     # Extract parameters
     periods = activities['periods']
@@ -15,19 +15,17 @@ def write_sectoral_emissions(activities, types, results, writer):
     # Build the cell to write
     nS = len(sectors)
     nP = len(periods)
-    # Create a 2D list (cell) with dimensions (2*n_s+1) x (n_p+2)
-    c = [[None for _ in range(nP + 2)] for _ in range(2 * nS + 1)]
+    c = [[None for _ in range(nP + 2)] for _ in range(2 * nS + 1)] # Create a 2D list (cell) with dimensions (2*n_s+1) x (n_p+2)
     c[0][0] = 'Emisions in Mton CO_2 eq'
-    # Fill first row: set columns 1 to n_p with period values
-    c[0][1:nP+1] = list(periods[:nP])
+    c[0][1:nP+1] = list(periods[:nP]) # Fill first row: set columns 1 to n_p with period values
     
     # Fill even-indexed rows (MATLAB rows 2,4,... => Python indices 1,3,...): set sector names and "Positive"
-    for i in range(nS):
+    for i in range(nS): 
         c[2 * i + 1][0] = sectors[i]
         c[2 * i + 1][1] = 'Positive'
     
     # Fill odd-indexed rows (MATLAB rows 3,5,... => Python indices 2,4,...): set sector names and "Negative"
-    for i in range(nS):
+    for i in range(nS): 
         c[2 * i + 2][0] = sectors[i]
         c[2 * i + 2][1] = 'Negative'
     
@@ -39,5 +37,4 @@ def write_sectoral_emissions(activities, types, results, writer):
     
     # Write the excel sheet
     df = pd.DataFrame(c)
-
     df.to_excel(writer, sheet_name=sheet_name, header=False, index=False)

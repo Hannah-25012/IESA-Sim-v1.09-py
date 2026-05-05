@@ -1,6 +1,8 @@
+# File to write the technology MCAs sheet
 import pandas as pd
 
 def write_MCAs(activities, technologies, agents, writer):
+
     # Extract Parameters
     periods = activities['periods']
     tech_balancers = technologies['balancers']['ids']
@@ -19,9 +21,7 @@ def write_MCAs(activities, technologies, agents, writer):
     nP = len(periods)
     nTb = len(tech_balancers)
     nMC = len(multi_criteria_categories)
-    
-    # Create the header row
-    C = []
+    C = [] # Create the header row
     header = ['technology', 'name', 'sector', 'subsector', 'main activity', 'units', 'mca category']
     for iP in range(nP):
         header.append(str(periods[iP]))
@@ -46,6 +46,4 @@ def write_MCAs(activities, technologies, agents, writer):
     
     # Write the excel sheet (similar to xlswrite in Matlab)
     df = pd.DataFrame(C[1:], columns=C[0])
-
-
     df.to_excel(writer, sheet_name=sheet_name, header=False, index=False)

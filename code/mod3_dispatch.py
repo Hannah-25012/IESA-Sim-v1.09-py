@@ -1,5 +1,4 @@
 # Function to determine the operation of the energy assets for the period.
-
 import numpy as np
 from disp_energy_balance import disp_energy_balance
 from disp_energy_intrayearly import disp_energy_intrayearly
@@ -17,9 +16,8 @@ def mod3_dispatch(dimensions, parameters, activities, technologies, profiles, po
     # Initialize prices
     prices_hourly = np.ones((nH, 1)) * initialized_prices
 
-    # Call the iteration loop
+    # Call the iteration loop for the energy balance
     tech_use_hourly = np.zeros((nH, nTb))  # Preallocate (in units of activity)
-
     for iId in range(nId):
 
         # Call the energy balance for yearly activities
@@ -27,10 +25,6 @@ def mod3_dispatch(dimensions, parameters, activities, technologies, profiles, po
         _, tech_use_hourly = disp_energy_balance(
             dimensions, activities, technologies, profiles, tech_use_hourly, False, iP
         )
-        # This is the first time already where there is a slight difference for tech_use_hourly 
-        # debugging
-        # tech_use_hourly_sum = np.sum(tech_use_hourly, axis=0)
-        # print("sum of sum of tech_use_hourly:", np.sum(tech_use_hourly_sum))
 
         # Call the intrayearly energy balance module
         print("--Solving the intrayear energy balance in the iteration loop...")
@@ -38,10 +32,6 @@ def mod3_dispatch(dimensions, parameters, activities, technologies, profiles, po
             dimensions, parameters, activities, technologies, profiles, policies, 
             tech_use_hourly, prices_hourly, iP, iId == nId - 1
         )
-        # debugging
-        # tech_use_hourly_sum = np.sum(tech_use_hourly, axis=0)
-        # print("sum of tech_use_hourly per technology:", tech_use_hourly_sum)
-        # print("sum of sum of tech_use_hourly:", np.sum(tech_use_hourly_sum))
 
     # Call the energy balance to rebalance the dispatch
     print("--Solving the definitive energy balance to close the iteration loop ...")
@@ -60,16 +50,15 @@ def mod3_dispatch(dimensions, parameters, activities, technologies, profiles, po
     )
 
     # Save Variables
-    activities['prices']['hourly'][:, :, iP] = prices_hourly # slightly off in last few decimals
-    technologies['balancers']['use']['yearly'][:, iP] = tech_use # slightly off in last few decimals. matlab values 467 amd 468 don't match (python 466 and 467)
-    technologies['balancers']['use']['hourly'][:, :, iP] = tech_use_hourly # slightly off in last few decimals
-    # debugging
-    # matlab values 467 amd 468 don't match (python 466 and 467). This concerns small scale storage buffer - Final Gas, large scale storage buffer - Final gas
-    # tech_use_hourly_sum = np.sum(tech_use_hourly, axis=0)
-    # print("sum of tech_use_hourly per technology:", tech_use_hourly_sum)
-    technologies['balancers']['stocks']['evolution'][:, iP] = tech_stock # correct
-    technologies['balancers']['investments'][:, iP] = investments # correct
-    technologies['infra']['stocks']['evolution'][:, iP] = tech_stock_infra # correct
-    technologies['infra']['investments'][:, iP] = investments_infra # correct
+    activities['prices']['hourly'][:, :, iP] = prices_hourly 
+    # CHECK: tech_use values slightly off in last few decimals compared to matlab. matlab values 467 amd 468 don't match (python 466 and 467). 
+    # This concerns small scale storage buffer - Final Gas, large scale storage buffer - Final gas
+    # tech_use is derived from tech_use_hourly. tech_use_hourly is correct, so something must be going on in the summation.
+    technologies['balancers']['use']['yearly'][:, iP] = tech_use
+    technologies['balancers']['use']['hourly'][:, :, iP] = tech_use_hourly 
+    technologies['balancers']['stocks']['evolution'][:, iP] = tech_stock
+    technologies['balancers']['investments'][:, iP] = investments
+    technologies['infra']['stocks']['evolution'][:, iP] = tech_stock_infra
+    technologies['infra']['investments'][:, iP] = investments_infra
 
     return activities, technologies

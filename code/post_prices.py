@@ -1,6 +1,8 @@
+# Fiel to postprocess the energy prices in the solution
 import numpy as np
 
 def post_prices(dimensions, parameters, activities, technologies, policies, iP):
+
     # Extract Parameters
     nI = 5
     nH = dimensions['nH']
@@ -18,11 +20,9 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
     activity_resolution = activities['resolution']
     energy_scarcity = activities['energies']['scarcity'][:, iP]
     prices_hourly = activities['prices']['hourly'][:, :, iP]
-    # reshaping to make sure the variable goed from shape (21,64,7) to (21,) as in Matlab
     energy_prices_ranges_full = activities['energies']['prices']['ranges']
-    reshaped = energy_prices_ranges_full.reshape(dimensions['nRp'], -1)  
+    reshaped = energy_prices_ranges_full.reshape(dimensions['nRp'], -1) # reshaping to make sure the variable go from shape (21,64,7) to (21,) as in Matlab
     energy_prices_ranges = reshaped[:, iP]
-
     price_ranges_hours = activities['energies']['prices']['price_ranges_hours']
     activityPer_tech = technologies['balancers']['activities']
     activity_balances = technologies['balancers']['activity_balances']
@@ -38,43 +38,41 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
     taxes_activities = policies['taxes']['activities']
     taxes_values = policies['taxes']['values']
     
-    # Energy and emissions coords (boolean arrays)
-    coord_emission = np.array([atype == 'Emission' for atype in activityType_act])
+    # Energy and emissions coords 
+    coord_emission = np.array([atype == 'Emission' for atype in activityType_act]) # (boolean arrays)
     coord_energy = np.array([atype in ['Energy', 'Fix Energy'] for atype in activityType_act])
     
-    # Preallocate cost arrays
-    energy_prices_hourly_out = np.zeros((nH, nAe))
+    # Solve iterative loop to quantify production costs
+    energy_prices_hourly_out = np.zeros((nH, nAe)) # Preallocate
     emission_prices_hourly = np.zeros((nH, nAc))
-    
-    # Loop over iterations and activities
     for iI in range(nI):
         for iA in range(nA):
+
             # Identify the activity:
-            # Create boolean arrays: True where the activity name matches in energies/emissions lists.
-            iAe = np.array([act == activities_names[iA] for act in activities_energy])
+            iAe = np.array([act == activities_names[iA] for act in activities_energy]) # Create boolean arrays: True where the activity name matches in energies/emissions lists.
             iAc = np.array([act == activities_names[iA] for act in activities_emission])
             
+            # If the activity is energy
             if iAe.sum() + iAc.sum() > 0:
+
                 # Check the temporal resolution of the dispatch.
-                # In Matlab, check_not_yearly is the sum of comparisons; if zero then it is not yearly.
-                check_not_yearly = activity_resolution[iA] in ['daily', 'hourly', 'hourly-interconnected']
+                check_not_yearly = activity_resolution[iA] in ['daily', 'hourly', 'hourly-interconnected'] # In Matlab, check_not_yearly is the sum of comparisons; if zero then it is not yearly.
                 if not check_not_yearly:
+
                     # Select technologies that will be evaluated:
                     coord_tech = np.array([ap == activities_names[iA] for ap in activityPer_tech])
+
+                    # If no main technologies, use those with positive activity balance
                     if coord_tech.sum() == 0:
-                        # If no main technologies, use those with positive activity balance
                         coord_tech = activity_balances[:, iA] > 0
                     
+                    # Identify total production of the activity by those technologies and their shares
                     nT = int(coord_tech.sum())
-                    
-                    # Calculate total production for the activity by these technologies.
-                    # activity_balances[coord_tech, iA] becomes a 1D array (length nT)
-                    # np.ones((nH,1)) @ ... creates an (nH x nT) matrix for multiplication.
-                    total_prod = np.sum((techUse_hourly[:, coord_tech] + np.finfo(float).eps) *
-                                          (np.ones((nH, 1)) @ activity_balances[coord_tech, iA].reshape(1, -1)),
+                    total_prod = np.sum((techUse_hourly[:, coord_tech] + np.finfo(float).eps) * # activity_balances[coord_tech, iA] becomes a 1D array (length nT)
+                                          (np.ones((nH, 1)) @ activity_balances[coord_tech, iA].reshape(1, -1)), # np.ones((nH,1)) @ ... creates an (nH x nT) matrix for multiplication.
                                           axis=1)  # shape: (nH,)
                     
-                    # Determine production shares. If total production is zero overall, assume even use.
+                    # Identify if any technology was in use. Otherwise assume an even use of technology
                     if total_prod.sum() > 0:
                         share_prod = (techUse_hourly[:, coord_tech] + np.finfo(float).eps) / (
                             total_prod.reshape(-1, 1) + np.finfo(float).eps)
@@ -85,51 +83,42 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
                     coord_taxes_act = np.array([act == activities_names[iA] for act in taxes_activities])
                     taxes_effect = 0
                     if coord_taxes_act.sum() > 0:
-                        # If multiple, we use the first matching element.
-                        idx_tax = np.where(coord_taxes_act)[0][0]
+                        idx_tax = np.where(coord_taxes_act)[0][0] # If multiple, we use the first matching element.
                         taxes_effect = taxes_values[idx_tax, iP]
                     
                     # Identify if there is a feed-in for this activity.
                     coord_feedin_act = np.array([act == activities_names[iA] for act in feedin_activities])
                     feedin_effect_tech = np.zeros(nT)
                     if coord_feedin_act.sum() > 0:
-                        idx_feedin = np.where(coord_feedin_act)[0][0]
-                        # Multiply the feed-in value by the element-wise product of activity balances and feedin_subject
+                        idx_feedin = np.where(coord_feedin_act)[0][0] 
                         feedin_effect_tech = feedin_values[idx_feedin, iP] * (
-                            activity_balances[coord_tech, iA] * feedin_subject[coord_tech])
-                    # Ensure nonnegative feedin effect
-                    feedin_effect_tech = np.maximum(feedin_effect_tech, 0)
+                            activity_balances[coord_tech, iA] * feedin_subject[coord_tech]) # Multiply the feed-in value by the element-wise product of activity balances and feedin_subject
+                    feedin_effect_tech = np.maximum(feedin_effect_tech, 0) # Ensure nonnegative feedin effect
                     
                     # Obtain the production costs per technology (nH x nT)
-                    cost_prod = np.zeros((nH, nT))
+                    cost_prod = np.zeros((nH, nT)) # Preallocate
                     vom_cost_temp = vom_cost[coord_tech]  # length nT
-                    # Use boolean indexing to select rows for energy and emission balances.
                     energy_balances_temp = activity_balances[coord_tech][:, coord_energy]  # size: nT x (num energy coords)
                     emission_balances_temp = activity_balances[coord_tech][:, coord_emission]  # size: nT x (num emission coords)
-                    
-                    # Loop over each technology index for this activity
                     for iT in range(nT):
+
                         # Identify activities with positive energy balances for this technology.
                         energy_pos = energy_balances_temp[iT, :] > 0  # boolean mask
                         
-                        # Identify cogeneration share (computed but not used later)
-                        if iAe.sum() > 0:
-                            # Here Matlab uses energy_balances_temp(iT, iAe) which in Matlab returns all matching columns.
-                            # For translation, we take the first True index.
+                        # Identify cogeneration share (CHECK: computed but not used later)
+                        if iAe.sum() > 0: # Here Matlab uses energy_balances_temp(iT, iAe) which in Matlab returns all matching columns. For translation, we take the first True index.
                             idx_energy = np.where(iAe)[0][0]
                             denom = np.sum(energy_balances_temp[iT, energy_pos])
                             co_share = (energy_balances_temp[iT, idx_energy] / denom) if denom != 0 else 0
                         else:
                             co_share = 1
-                            # Set the emission balance corresponding to the first True in iAc to zero.
-                            idx_emiss = np.where(iAc)[0][0]
+                            idx_emiss = np.where(iAc)[0][0] # Set the emission balance corresponding to the first True in iAc to zero.
                             emission_balances_temp[iT, idx_emiss] = 0
                         
                         # Modify the balances to include only consumed energy:
                         energy_balances_temp[iT, energy_pos] = 0
                         
-                        # Calculate production costs:
-                        # Subtract variable costs, energy costs, emission costs, feedin subsidy and add taxes.
+                        # Calculate production costs. Subtract variable costs, energy costs, emission costs, feedin subsidy and add taxes.
                         cost_prod[:, iT] = (
                             vom_cost_temp[iT]
                             - np.sum(energy_prices_hourly_out * (np.ones((nH, 1)) @ energy_balances_temp[iT, :].reshape(1, -1)), axis=1)
@@ -140,14 +129,11 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
                     
                     # Split the production costs per tech use share.
                     if iAe.sum() > 0:
-                        # In Matlab, energy_prices_hourly(:,iAe) updates all columns corresponding to True.
-                        # In Python, use boolean indexing.
                         energy_prices_hourly_out[:, iAe] = np.sum(cost_prod * share_prod, axis=1, keepdims=True)
                     else:
                         emission_prices_hourly[:, iAc] = np.sum(cost_prod * share_prod, axis=1, keepdims=True)
-                
+
                 else:
-                    # For the "yearly" resolution: if first iteration (iI==0 in Python equals iI==1 in Matlab) and energy
                     if iI == 0 and iAe.sum() > 0:
                         energy_prices_hourly_out[:, iAe] = prices_hourly[:, iA, None]
 
@@ -161,11 +147,11 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
         emission_prices[iAc] = np.sum(emission_prices_hourly[:, iAc]) / nH
 
     # Adjust prices accordingly with the scarcity price
-    # Obtain the price curve for all primary energy technologies 
-    # that are not Electricity
+    # Obtain the price curve for all primary energy technologies that are not Electricity
     primary_available = np.zeros(nTb)
     primary_price = np.zeros(nTb)
     for iTb in range(nTb):
+
         # Find the activity index matching the current technology's activity
         if activityPer_tech[iTb] in activities_names:
             act_coord = activities_names.index(activityPer_tech[iTb])
@@ -184,24 +170,22 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
 
     # Obtain the scarcity price based on total scarcity
     total_scarcity = np.sum(energy_scarcity)
-    # In MATLAB: scarcity_coord = min(sum((primary_curve_volume < total_scarcity) + 1), length(primary_curve_price));
     scarcity_coord = min(int(np.sum(primary_curve_volume < total_scarcity)) + 1, len(primary_curve_price))
     scarcity_price = primary_curve_price[scarcity_coord - 1]
 
-    # Check all energy activities for scarcity adjustment
+    # Check all energy activities for scarcity amd adjust their yearly prices
     for iAe in range(nAe):
-        # Determine the corresponding activity index for this energy activity
+
         if activities_energy[iAe] in activities_names:
             act_index = activities_names.index(activities_energy[iAe])
         else:
             act_index = None
+
         # Check the temporal resolution of the dispatch:
-        # (In MATLAB, check_not_yearly equals the sum of strcmp results and is zero when resolution is yearly)
-        check_not_yearly = False
+        check_not_yearly = False # (In MATLAB, check_not_yearly equals the sum of strcmp results and is zero when resolution is yearly)
         if act_index is not None:
             if activity_resolution[act_index] in ['daily', 'hourly', 'hourly-interconnected']:
                 check_not_yearly = True
-        # If the dispatch resolution is yearly (i.e. check_not_yearly is False) and scarcity is present...
         if not check_not_yearly:
             if energy_scarcity[iAe] > 0:
                 old_price = energy_prices[iAe]
@@ -210,7 +194,6 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
 
     # Obtain price ranges distribution for the hourly prices
     energy_prices_ranges = np.empty((nRp, nAe))
-
     for iAe in range(nAe):
         sorted_prices = np.sort(energy_prices_hourly_out[:, iAe])
         for iRp in range(nRp):
@@ -219,7 +202,6 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
 
     # Save Variables
     activities['energies']['prices']['yearly'][:, iP] = energy_prices
-    # Note: seems correct, still have to check the sum
     activities['energies']['prices']['hourly'][:, :, iP] = energy_prices_hourly_out
     activities['energies']['prices']['ranges'][:, :, iP] = energy_prices_ranges
     activities['emissions']['prices']['yearly'][:, iP] = emission_prices
