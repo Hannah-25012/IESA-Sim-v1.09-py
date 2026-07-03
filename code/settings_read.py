@@ -27,7 +27,7 @@ def settings_read(version_number):
     # Manage paths
     outputName_root = f'{scenario_name}_Output_v{version_number}'
     input_file = os.path.join('input', file_name)
-    output_path = os.path.join('output', outputName_root)
+    output_path = os.path.join('../output', outputName_root)
 
     # Save settings
     settings = {
