@@ -4,6 +4,7 @@ import os
 import pickle
 from pathlib import Path
 from mod0_read_data import mod0_read_data
+from mod0_read_data_save_duck import mod0_read_data_save_duck
 from mod1_initialize import mod1_initialize
 from mod2_invest import mod2_invest
 from mod3_dispatch import mod3_dispatch
@@ -30,7 +31,7 @@ def main(settings):
     # Read the data from excel input file
     if read_input is True:
         print(f"Reading the excel file {input_file} ...")
-        parameters, types, activities, profiles, technologies, agents, policies = mod0_read_data(input_file)
+        parameters, types, activities, profiles, technologies, agents, policies = mod0_read_data_save_duck(input_file)
         print("The input data was retrieved successfully from the excel file")
     
     # Load data from previously saved .pkl or .mat file

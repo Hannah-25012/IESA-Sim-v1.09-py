@@ -5,7 +5,7 @@ import os
 def settings_read(version_number):
 
     # Define file name
-    json_settings_file = f'IESA_settings_v{version_number}.json'
+    json_settings_file = f'settings/IESA_settings_v{version_number}.json'
     
     # Read file
     with open(json_settings_file, 'r') as file:

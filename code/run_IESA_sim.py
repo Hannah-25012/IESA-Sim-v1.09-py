@@ -7,9 +7,10 @@ import matplotlib.pyplot as plt
 
 # Set working directory to the script's location
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
+os.chdir('..')
 
 # Specify version number
-version_number = "1.09"
+version_number = "1.10"
 
 # Welcome message
 print(f"Welcome to IESA-Sim v{version_number}")

@@ -1,0 +1,13 @@
+{
+    "file_name_prio": "IESA-Opt_v4.4.5 Policy + Agents.xlsx",
+    "file_name_second": "11.14 SSP_Ref.xlsx",
+    "scenario_name": "combine",
+    "read_input": true,
+    "save_output": true,
+    "plot_price_duration": false,
+    "foresight": false,
+    "nIp": 1,
+    "nIb": 10,
+    "nId": 2,
+    "year_end": 2050
+}
