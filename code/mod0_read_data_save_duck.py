@@ -1,18 +1,49 @@
 # File to read data from the excel input file
+from typing import *
+
 import pandas as pd
 import numpy as np
 import pickle
 import duckdb
 from Constants import Parameters
+import re
 # FIX: To suppress warning "UserWarning: Data Validation extension is not supported and will be removed warn(msg)" - not sure what to do with this, maybe fix later
 import warnings
+
+from Constants.Parameters import Activities, Agents
+
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
+
+def dict_to_df_padded_zero(data):
+    max_len = max(len(v) for v in data.values())
+    padded = {
+        k: list(v) + [0] * (max_len - len(v))
+        for k, v in data.items()
+    }
+    return pd.DataFrame(padded)
+
+def rename_volumes_col(col):
+    if str(col).startswith(Parameters.Activities.periods_start):
+        year_match = re.search(r'\d+', str(col))
+        if year_match:
+            return f"volumes_{year_match.group()}"
+    return col  # leave unchanged if it doesn't match
+
+def dtype_to_sql(dtype):
+    if "int" in str(dtype):
+        return "INTEGER"
+    elif "float" in str(dtype):
+        return "DOUBLE"
+    else:
+        return "VARCHAR"
 
 def mod0_read_data_save_duck(file_name):
 
     # Create empty dictionaries to store data that is derived from excel sheets
     parameters, types, activities, profiles, technologies, agents, policies = {}, {}, {}, {}, {}, {}, {}
 
+    con = duckdb.connect("SIMmodel.duckdb")
     # === Parameters sheet ===
     print('--Reading parameters sheet')
     parameters_values = pd.read_excel(file_name, sheet_name='Parameters', usecols="B", skiprows=2, nrows=20).squeeze()
@@ -67,20 +98,28 @@ def mod0_read_data_save_duck(file_name):
     rows.append({"Name": "min_spread", "Value": min_spread})
     rows.append({"Name": "gov_dr", "Value": gov_dr})
     rows.append({"Name": "exports_value", "Value": exports_value})
-    parameters_input = pd.concat([parameters_input, pd.DataFrame(rows)], ignore_index=True)
+    parameters_input_short = pd.DataFrame(rows, columns=["Name", "Value"])
 
     df_parameters_parameters_scarcity = pd.DataFrame(parameters_scarcity)
-    duckdb.connect("parameters.duckdb").execute("CREATE TABLE original_params AS SELECT * FROM parameters_input").close()
-    duckdb.connect("parameters.duckdb").execute(
-        "CREATE TABLE powinv AS SELECT * FROM parameters_powinv").close()
-    duckdb.connect("parameters.duckdb").execute(
-        "CREATE TABLE scarcity AS SELECT * FROM parameters_scarcity").close()
+    try:
+        con.execute("CREATE TABLE original_params AS SELECT * FROM parameters_input")
+        con.execute("ALTER TABLE original_params ADD PRIMARY KEY (Name)")
+        con.execute("CREATE TABLE original_params_short AS SELECT * FROM parameters_input_short")
+        con.execute("ALTER TABLE original_params_short ADD PRIMARY KEY (Name)")
+        con.execute("CREATE TABLE powinv AS SELECT * FROM parameters_powinv")
+        con.execute("ALTER TABLE powinv ADD PRIMARY KEY (Name)")
+        con.execute("CREATE TABLE scarcity AS SELECT * FROM parameters_scarcity")
+        con.execute("ALTER TABLE scarcity ADD PRIMARY KEY (Name)")
+    except:
+        print("error in saving Parameters to duckdb")
 
     # === Types sheet ===
+    # The only one where I kept this way of reading per coumn and excel column name
+    # TO DO: Make this reading nicer
     print('--Reading types sheet')
     activity_type = pd.read_excel(file_name, sheet_name='Types', usecols="B", skiprows=2, nrows=4).squeeze().tolist()
     sectors = pd.read_excel(file_name, sheet_name='Types', usecols="F", skiprows=2, nrows=27).dropna().squeeze().tolist()
-    energy_labels = pd.read_excel(file_name, sheet_name='Types', usecols="K", skiprows=2, nrows=17, dtype=str).squeeze().tolist()
+    energy_labels = pd.read_excel(file_name, sheet_name='Types', usecols="K", skiprows=2, nrows=17, dtype=str, keep_default_na=False).squeeze().tolist()
     energy_price_init = pd.read_excel(file_name, sheet_name='Types', usecols="M", skiprows=2, nrows=27).dropna().squeeze().to_numpy()
 
     # Store in dictionary
@@ -90,25 +129,188 @@ def mod0_read_data_save_duck(file_name):
         'labels' : energy_labels,
         'price init' : energy_price_init,
     }
+    df_activities = pd.DataFrame(activity_type, columns=["activity_type"])
+    df_sectors = pd.DataFrame(activity_type, columns=["sectors"])
+    df_energy = dict_to_df_padded_zero(types['energy'])
+    try:
+        con.execute("CREATE TABLE activity_types AS SELECT * FROM df_activities")
+        con.execute("ALTER TABLE activity_types ADD PRIMARY KEY (activity_type)")
+        con.execute("CREATE TABLE sectors AS SELECT * FROM df_sectors")
+        con.execute("ALTER TABLE sectors ADD PRIMARY KEY (sectors)")
+        con.execute("CREATE TABLE energy_types AS SELECT * FROM df_energy")
+        con.execute("ALTER TABLE energy_types ADD PRIMARY KEY (labels)")
+    except:
+        print("error in saving types to duckdb")
+
+    # === Agents sheet ===
+    #Agents need to be before activities because they are foreign keys
+    print('--Reading agents sheet')
+
+    agents = pd.read_excel(
+        file_name,
+        sheet_name='Agents',
+        skiprows=1,
+        header=[0, 1,2],
+    )
+    agents.columns = [
+        " / ".join(str(x) for x in col if pd.notna(x) and not str(x).startswith("Unnamed"))
+        for col in agents.columns
+    ]
+    agents.columns = [re.sub(r'\s*/?\s*\[.*\]\s*$', '', col).strip() for col in agents.columns]
+    agents = agents.rename(columns={Agents.rates: "rates"})
+    agents = agents.rename(columns={Agents.profiles: "Name"})
+    # 1. select columns that start with the prefix
+    selected_cols = [col for col in agents.columns if str(col).startswith(Agents.types)]
+    # 2. extract the agent types
+    types = [str(col)[len(Agents.types):].strip(" /").strip() for col in selected_cols]
+    types_df = pd.DataFrame(types, columns=["Name"])
+
+    rename_map = dict(zip(selected_cols, types))
+    agents = agents.rename(columns=rename_map)
+
+    agent_profiles = agents[agents["rates"].notna()]
+    agent_profiles["rates"] = agent_profiles["rates"] / 100
+    agent_profiles_toTable = agent_profiles[["Name", "rates"]]
+    population_df = agent_profiles.melt(
+        id_vars=["Name"],  # FK to agent_profiles
+        value_vars=types,  # the agent-type columns: Innovators, Early adopters, Majority, Laggards
+        var_name="agent_type",  # FK to agent_types
+        value_name="value"
+    ).rename(columns={"Name": "agent_profile"})
+    population_df["value"]=population_df["value"]/100
+
+    try:
+        con.execute("CREATE TABLE agent_profiles AS SELECT * FROM agent_profiles_toTable")
+        con.execute("ALTER TABLE agent_profiles ADD PRIMARY KEY (Name)")
+        con.execute("CREATE TABLE agent_types AS SELECT * FROM types_df")
+        con.execute("ALTER TABLE agent_types ADD PRIMARY KEY (Name)")
+
+    except:
+        print("error in saving agent_profiles and types to duckdb")
+
+    try:
+        con.execute("""
+            CREATE TABLE population (
+                agent_profile VARCHAR,
+                agent_type VARCHAR,
+                value DOUBLE,
+                FOREIGN KEY (agent_profile) REFERENCES agent_profiles(Name),
+                FOREIGN KEY (agent_type) REFERENCES agent_types(Name)
+            )
+        """)
+        con.execute("INSERT INTO population SELECT * FROM population_df")
+    except:
+        print("error in saving populations to duckdb")
+
+    weight_profiles = agents[agents["rates"].isna()]
+    mask = weight_profiles.astype(str).apply(lambda row: row.str.contains(r"\[ad\]", regex=True, na=False)).any(axis=1)
+    weight_profiles = weight_profiles[~mask]
+    weight_profiles = weight_profiles.drop(columns=["rates"])
+    wp=weight_profiles[['Name']]
+
+    try:
+        con.execute("CREATE TABLE agent_criteria AS SELECT * FROM wp")
+        con.execute("ALTER TABLE agent_criteria ADD PRIMARY KEY (Name)")
+    except:
+        print("error in saving agent_profiles and types to duckdb")
+
+    criteria_weights_df = weight_profiles.melt(
+        id_vars=["Name"],  # FK to agent_criteria
+        value_vars=types,  # the agent-type columns: Innovators, Early adopters, Majority, Laggards
+        var_name="agent_type",  # FK to agent_types
+        value_name="value"
+    ).rename(columns={"Name": "agent_criteria"})
+
+    try:
+        con.execute("""
+            CREATE TABLE criteria_weights (
+                agent_criteria VARCHAR,
+                agent_type VARCHAR,
+                value DOUBLE,
+                FOREIGN KEY (agent_criteria) REFERENCES agent_criteria(Name),
+                FOREIGN KEY (agent_type) REFERENCES agent_types(Name)
+            )
+        """)
+        con.execute("INSERT INTO criteria_weights SELECT * FROM criteria_weights_df")
+    except:
+        print("error in saving criteria_weights_df to duckdb")
+
+    agent_profiles = pd.read_excel(file_name, sheet_name='Agents', usecols="A", skiprows=3,
+                                   nrows=5).dropna().squeeze().tolist()
+    agent_types = pd.read_excel(file_name, sheet_name='Agents', usecols="C:F", skiprows=1,
+                                nrows=1).dropna().squeeze().tolist()
+    multiCriteria_categories = pd.read_excel(file_name, sheet_name='Agents', usecols="A", skiprows=9,
+                                             nrows=4).dropna().squeeze().tolist()
+    agents_dr = pd.read_excel(file_name, sheet_name='Agents', usecols="B", skiprows=3, nrows=5).fillna(
+        0).squeeze().to_numpy() / 100
+    agents_populations = pd.read_excel(file_name, sheet_name='Agents', usecols="C:F", skiprows=3, nrows=5).fillna(
+        0).to_numpy() / 100
+    weights_multiCriteria = pd.read_excel(file_name, sheet_name='Agents', usecols="C:F", skiprows=9, nrows=4).fillna(
+        0).to_numpy()
+
+    # Store in dictionary
+    agents = {
+        'types': agent_types,
+        'profiles': agent_profiles,
+        'criteria': {
+            'categories': multiCriteria_categories,
+            'weights': weights_multiCriteria
+        },
+        'populations': agents_populations,
+        'rates': agents_dr
+    }
 
     # === Activities sheet ===
     print('--Reading activities sheet')
-    activities_names = pd.read_excel(file_name, sheet_name='Activities', usecols="A", skiprows=7, nrows=192).dropna().squeeze().tolist()
-    periods = pd.read_excel(file_name, sheet_name='Activities', usecols="C:I", skiprows = 6, nrows=1).squeeze().to_numpy()
-    activities_net_volumes = pd.read_excel(file_name, sheet_name='Activities', usecols="C:I", skiprows=7, nrows=len(activities_names)).fillna(0).to_numpy() # CHECK: Matlab code uses len(periods) for activities_netVolumes, maybe need to adjust later
-    activity_resolution = pd.read_excel(file_name, sheet_name='Activities', usecols="K", skiprows=7, nrows=len(activities_names)).squeeze().tolist()
-    activity_type_act = pd.read_excel(file_name, sheet_name='Activities', usecols="L", skiprows=7, nrows=len(activities_names)).dropna().squeeze().tolist()
-    activity_label = pd.read_excel(file_name, sheet_name='Activities', usecols="O", skiprows=7, nrows=len(activities_names)).squeeze().tolist()
-    activity_agent = pd.read_excel(file_name, sheet_name='Activities', usecols="P", skiprows=7, nrows=len(activities_names)).squeeze().tolist()
+    activities = pd.read_excel(
+        file_name,
+        sheet_name='Activities',
+        skiprows=6,
+        header=[0, 1],
+        keep_default_na=False,
+    )
+    activities.columns = [
+        " / ".join(str(x) for x in col if pd.notna(x) and not str(x).startswith("Unnamed"))
+        for col in activities.columns
+    ]
+    activities.columns = [re.sub(r'\s*/?\s*\[.*\]\s*$', '', col).strip() for col in activities.columns]
 
-    # Store in dictionary
-    activities['names'] = activities_names
-    activities['periods'] = periods
-    activities['volumes'] = activities_net_volumes
-    activities['resolution'] = activity_resolution
-    activities['types'] = activity_type_act
-    activities['labels'] = activity_label
-    activities['agents'] = activity_agent
+    prefix = Parameters.Activities.periods_start
+
+    # 1. select columns that start with the prefix
+    selected_cols = [col for col in activities.columns if str(col).startswith(prefix)]
+
+    # 2. extract the years from those column names, and cast to int
+    periods = [int(re.search(r'\d+', str(col)[len(prefix):]).group()) for col in selected_cols]
+
+    print(selected_cols)
+    print(periods)
+    activities.columns = [rename_volumes_col(col) for col in activities.columns]
+
+    activities = activities.rename(columns={Activities.activities_names: "Name"})
+    activities = activities.rename(columns={Activities.activity_resolution: "activity_resolution"})
+    activities = activities.rename(columns={Activities.activity_type_act: "activity_type"})
+    activities = activities.rename(columns={Activities.activity_label: "energy_label"})
+    activities = activities.rename(columns={Activities.activity_agent: "agent_profile"})
+    activities_df=activities
+
+    try:
+        cols_sql = ",\n    ".join(f'"{col}" {dtype_to_sql(dt)}' for col, dt in activities.dtypes.items())
+
+        create_stmt = f"""
+        CREATE TABLE activities (
+            {cols_sql},
+            FOREIGN KEY (activity_type) REFERENCES activity_types(activity_type),
+            FOREIGN KEY (agent_profile) REFERENCES agent_profiles(Name),
+            FOREIGN KEY (energy_label) REFERENCES energy_types(labels)
+        )
+        """
+        con.execute(create_stmt)
+        con.execute("INSERT INTO activities SELECT * FROM activities_df")
+        con.close()
+    except:
+        print("error in saving activities to duckdb")
+
     activities['drivers'] = {}
     activities['energies'] = {}
     activities['emissions'] = {}
@@ -315,26 +517,7 @@ def mod0_read_data_save_duck(file_name):
         'costs': retrofits_costs
     }
 
-    # === Agents sheet ===
-    print('--Reading agents sheet')
-    agent_profiles = pd.read_excel(file_name, sheet_name='Agents', usecols="A", skiprows=3, nrows=5).dropna().squeeze().tolist()
-    agent_types = pd.read_excel(file_name, sheet_name='Agents', usecols="C:F", skiprows=1, nrows=1).dropna().squeeze().tolist()
-    multiCriteria_categories = pd.read_excel(file_name, sheet_name='Agents', usecols="A", skiprows=9, nrows=4).dropna().squeeze().tolist()
-    agents_dr = pd.read_excel(file_name, sheet_name='Agents', usecols="B", skiprows=3, nrows=5).fillna(0).squeeze().to_numpy() / 100
-    agents_populations = pd.read_excel(file_name, sheet_name='Agents', usecols="C:F", skiprows=3, nrows=5).fillna(0).to_numpy() / 100
-    weights_multiCriteria = pd.read_excel(file_name, sheet_name='Agents', usecols="C:F", skiprows=9, nrows=4).fillna(0).to_numpy()
 
-    # Store in dictionary
-    agents = {
-        'types': agent_types,
-        'profiles': agent_profiles,
-        'criteria': {
-            'categories': multiCriteria_categories,
-            'weights': weights_multiCriteria
-        },
-        'populations': agents_populations,
-        'rates': agents_dr
-    }
 
     # Policies sheet
     print('--Reading policies sheet')

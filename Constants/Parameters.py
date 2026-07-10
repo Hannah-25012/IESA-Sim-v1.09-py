@@ -14,6 +14,24 @@ class Parameters:
     gov_dr = "Government depreciation rate"
     exports_value = "Exports value as ratio of crude oil (0 for no)"
 
+class Activities:
+    activities_names="Activities"
+    periods_start="Evolution of volumes in time"
+    activity_resolution="Dispatch resolution"
+    activity_type_act="Activity Type"
+    activity_label="Energy Label"
+    activity_agent="Agent Profile"
+
+class Agents:
+    types = "Agent Types"
+    profiles = "Agent profiles"
+    ic_criteria =  "Weights for investment criteria"
+    rates = "Expected rates of return"
+
+
+
+
+
 
 
 
