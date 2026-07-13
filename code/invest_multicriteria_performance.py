@@ -4,19 +4,12 @@ import numpy as np
 def invest_multicriteria_performance(dimensions, activities, technologies, agents, iP):
 
     # Extract parameters
-    nA = dimensions['nA']
     nTb = dimensions['nTb']
-    nMC = dimensions['nMC']
-    activities_names = activities['names']
-    activity_types = activities['types']
-    activity_per_tech = technologies['balancers']['activities']
-    activity_balances = technologies['balancers']['activity_balances']
-    buffer_capacity = technologies['balancers']['buffers']['capacity']
-    tech_LCOPs = technologies['balancers']['lcops']['values'][:, iP]
-    social_perception_tech = technologies['balancers']['agents']['social_perception']
-    perceived_complexity_tech = technologies['balancers']['agents']['complexity']
-    multicriteria_performance_tech = technologies['balancers']['mca']['matrix'][:, :, iP]
-    multicriteria_categories = agents['criteria']['categories']
+    tech_entities = technologies.balancers.entities
+    emission_idx = [a.idx for a in activities.entities if a.is_emission]
+    tech_LCOPs = technologies.balancers.lcops.values[:, iP]
+    multicriteria_performance_tech = technologies.balancers.mca.matrix[:, :, iP]
+    multicriteria_categories = agents.criteria.categories
 
     # Identify multi-criteria coordinates
     iMC1 = multicriteria_categories.index('Social Attitude')
@@ -24,47 +17,42 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
     iMC3 = multicriteria_categories.index('Cost performance')
     iMC4 = multicriteria_categories.index('Complexity')
 
-    # Identify emissions coordinates
-    iAc = [i for i, t in enumerate(activity_types) if t == 'Emission']
-
     # Do a loop for all technologies to calculate their multi-criteria performance
     emissions = np.zeros(nTb) # Preallocate emissions
-    for iTb in range(nTb):
+    for tech in tech_entities:
 
-        # Extract the balance of the technology
-        technology_balance = np.copy(activity_balances[iTb, :])
-        technology_balance[activities_names.index(activity_per_tech[iTb])] = 0
+        # Extract the balance of the technology, zeroing out its own main activity
+        technology_balance = np.copy(tech.activity_balances)
+        if tech.activity is not None:
+            technology_balance[tech.activity.idx] = 0
 
         # Calculate emissions
-        emissions[iTb] = -np.sum(technology_balance[iAc])
+        emissions[tech.idx] = -np.sum(technology_balance[emission_idx])
 
         # Retrieve social perception parameter
-        if social_perception_tech[iTb] == 'Negative':
-            multicriteria_performance_tech[iTb, iMC1] = 0
-        elif social_perception_tech[iTb] == 'Neutral':
-            multicriteria_performance_tech[iTb, iMC1] = 0.5
-        elif social_perception_tech[iTb] == 'Positive':
-            multicriteria_performance_tech[iTb, iMC1] = 1
+        if tech.social_perception == 'Negative':
+            multicriteria_performance_tech[tech.idx, iMC1] = 0
+        elif tech.social_perception == 'Neutral':
+            multicriteria_performance_tech[tech.idx, iMC1] = 0.5
+        elif tech.social_perception == 'Positive':
+            multicriteria_performance_tech[tech.idx, iMC1] = 1
 
         # Retrieve perceived complexity parameter
-        if perceived_complexity_tech[iTb] == 'Low':
-            multicriteria_performance_tech[iTb, iMC4] = 1
-        elif perceived_complexity_tech[iTb] == 'Med':
-            multicriteria_performance_tech[iTb, iMC4] = 0.5
-        elif perceived_complexity_tech[iTb] == 'High':
-            multicriteria_performance_tech[iTb, iMC4] = 0
+        if tech.complexity == 'Low':
+            multicriteria_performance_tech[tech.idx, iMC4] = 1
+        elif tech.complexity == 'Med':
+            multicriteria_performance_tech[tech.idx, iMC4] = 0.5
+        elif tech.complexity == 'High':
+            multicriteria_performance_tech[tech.idx, iMC4] = 0
 
     # Identify emission and LCOP ranges for all technologies with the same main activity
-    for iA in range(nA):
+    for activity in activities.entities:
 
-        # Identify competing technologies
-        icoord = [i for i, act in enumerate(activity_per_tech) if act == activities_names[iA]]
+        # Identify competing (non-buffer) technologies for this activity
+        competitors = [tech for tech in activity.technologies if not tech.is_buffer]
 
-        # Check if the technology is a buffer
-        no_buffer_coord = [buffer_capacity[i] == 0 for i in icoord]
-        icoord = [i for i, valid in zip(icoord, no_buffer_coord) if valid]
-
-        if len(icoord) > 0:
+        if len(competitors) > 0:
+            icoord = [tech.idx for tech in competitors]
 
             # Identify vectors of emissions and LCOPs
             emissions_vec = emissions[icoord]
@@ -92,6 +80,6 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
     )
 
     # Save the multi-criteria performance matrix
-    technologies['balancers']['mca']['matrix'][:, :, iP] = multicriteria_performance_tech
+    technologies.balancers.mca.matrix[:, :, iP] = multicriteria_performance_tech
 
     return technologies

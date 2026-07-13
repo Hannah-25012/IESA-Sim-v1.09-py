@@ -154,9 +154,12 @@ def _load_technologies(con, periods, activities_names):
     tech_df = con.execute(f'SELECT {quoted} FROM technologies ORDER BY seq').fetchdf()
     tech_balancers = tech_df["id"].tolist()
 
+    # Positionally aligned with tech_balancers (None where a tech has no flex
+    # coupling), not compacted, so it can be zipped/indexed by technology
+    # position - e.g. for resolving each Technology's flexibility.activity FK.
     flex_act_df = con.execute("SELECT tech_id, activity_name FROM technology_flexibility_activities").fetchdf()
     flex_act_map = dict(zip(flex_act_df["tech_id"], flex_act_df["activity_name"]))
-    flexibility_activity = [flex_act_map[t] for t in tech_balancers if t in flex_act_map]
+    flexibility_activity = [flex_act_map.get(t) for t in tech_balancers]
 
     costs_df = con.execute("SELECT tech_id, period, investment, fom, vom FROM technology_costs").fetchdf()
     inv_cost = _pivot(costs_df, "tech_id", tech_balancers, "period", periods, "investment")

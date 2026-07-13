@@ -4,7 +4,9 @@ import os
 import pickle
 from pathlib import Path
 from mod0_read_data_save_duck import mod0_read_data_save_duck
+from mod0_load_duckdb import load_from_duckdb
 from mod1_initialize import mod1_initialize
+from entities import link_entities
 from mod2_invest import mod2_invest
 from mod3_dispatch import mod3_dispatch
 from mod4_postprocessing import mod4_postprocessing
@@ -27,36 +29,19 @@ def main(settings):
     plot_price_duration = settings['plot_price_duration']
     print("Settings were successfully implemented")
 
-    # Read the data from excel input file
+    # Read the data from the excel input file into the database, if requested
+    db_path = "SIMmodel.duckdb"
     if read_input is True:
-        print(f"Reading the excel file {input_file} ...")
-        parameters, types, activities, profiles, technologies, agents, policies = mod0_read_data_save_duck(input_file)
+        print(f"Reading the excel file {input_file} into {db_path} ...")
+        mod0_read_data_save_duck(input_file)
         print("The input data was retrieved successfully from the excel file")
-    
-    # Load data from previously saved .pkl or .mat file
-    else:
-        # Note: The commented-out part of code loads data from .mat file (if we want to ensure compatibility with matlab)
-        # from scipy.io import loadmat
-        # data = loadmat('input/data.mat')
-        # parameters = data['parameters']
-        # types = data['types']
-        # activities = data['activities']
-        # profiles = data['profiles']
-        # technologies = data['technologies']
-        # agents = data['agents']
-        # policies = data['policies']
-        # print("The input data was successfully loaded from .mat file")
 
-        with open('data.pkl', 'rb') as file:
-            data = pickle.load(file)
-        parameters = data['parameters']
-        types = data['types']
-        activities = data['activities']
-        profiles = data['profiles']
-        technologies = data['technologies']
-        agents = data['agents']
-        policies = data['policies']
-        print("The input data was successfully loaded from .pkl file")
+    # Either way, the simulation runs off the database, not off dicts built
+    # straight from Excel or off a stale pickle - it's the single source of
+    # truth from here on.
+    print(f"Loading input data from {db_path} ...")
+    parameters, types, activities, profiles, technologies, agents, policies = load_from_duckdb(db_path)
+    print("The input data was successfully loaded from the database")
 
     print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
@@ -66,6 +51,14 @@ def main(settings):
         settings, types, activities, technologies, agents, policies
     )
     print("Initialization complete.")
+
+    # Build the Activity/Technology object graph (real cross-references,
+    # resolved once here) on top of the now-finalized arrays, so invest/dispatch/
+    # post-processing code can navigate relationships (tech.activity,
+    # activity.technologies, ...) instead of re-deriving index lists.
+    activity_entities, tech_entities = link_entities(activities, technologies)
+    activities.entities = activity_entities
+    technologies.balancers.entities = tech_entities
     print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
     # Begin the sequential running of modules for all periods
