@@ -389,8 +389,10 @@ def mod0_read_data_save_duck(file_name):
     hourly_header = pd.read_excel(file_name, sheet_name='HourlyProfiles', header=2, nrows=0).columns.tolist()
     hourly_profile_start = hourly_header.index(HourlyProfiles.month) + 1
     profile_types = hourly_header[hourly_profile_start:]
+    # header=2 only consumes the profile-name row; the sheet also has a "Data source"
+    # annotation row below it before the data starts, so skiprows must skip past that too.
     hourly_profiles = pd.read_excel(
-        file_name, sheet_name='HourlyProfiles', header=None, skiprows=3, nrows=8760,
+        file_name, sheet_name='HourlyProfiles', header=None, skiprows=4, nrows=8760,
         usecols=range(hourly_profile_start, len(hourly_header))
     ).to_numpy()
 
@@ -434,8 +436,9 @@ def mod0_read_data_save_duck(file_name):
     nIC = len(interconnector)
 
     price_positions = [price_header.index(f"{ic} / {p}") for ic in interconnector for p in periods]
+    # Same "Data source" annotation row as HourlyProfiles sits below the header here too.
     price_profiles_raw = pd.read_excel(
-        file_name, sheet_name='PriceProfiles', header=None, skiprows=3, nrows=8760, usecols=price_positions
+        file_name, sheet_name='PriceProfiles', header=None, skiprows=4, nrows=8760, usecols=price_positions
     ).to_numpy()
 
     price_profiles = np.zeros((8760, nIC, len(periods)))
@@ -765,9 +768,12 @@ def mod0_read_data_save_duck(file_name):
     # The activity-balance columns in this sheet are confirmed to carry the exact same
     # names, in the same order, as the Activities sheet's Name column - select by that
     # name instead of trusting a hardcoded Excel letter range to line up positionally.
+    # header=2 only consumes the activity-name row; the sheet also has an annotation row
+    # and a units row (e.g. '[PJ]') below it before the data starts, so skiprows must
+    # skip past those too (6 rows), not just the header rows.
     energy_balance_header = pd.read_excel(file_name, sheet_name='EnergyBalance', header=2, nrows=0).columns.tolist()
     energy_balance_data = pd.read_excel(
-        file_name, sheet_name='EnergyBalance', header=None, skiprows=5, nrows=550,
+        file_name, sheet_name='EnergyBalance', header=None, skiprows=6, nrows=550,
         usecols=range(len(energy_balance_header))
     )
     energy_balance_data.columns = energy_balance_header
