@@ -3,7 +3,6 @@ import time
 import os
 import pickle
 from pathlib import Path
-from mod0_read_data import mod0_read_data
 from mod0_read_data_save_duck import mod0_read_data_save_duck
 from mod1_initialize import mod1_initialize
 from mod2_invest import mod2_invest

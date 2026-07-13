@@ -111,6 +111,24 @@ def mod0_read_data_save_duck(file_name):
     min_spread_factor = Parameters.Parameters.min_spread_factor
     min_spread = min_spread_value / min_spread_factor
 
+    # === Parameters (in-memory dict, matches mod0_read_data.py's structure) ===
+    parameters['powinv'] = {
+        'SPBT_benchmark': powinv_SPBT_benchmark,
+        'SPBT_min': powinv_SPBT_min,
+        'CR_threshold': powinv_CR_threshold,
+        'CR_min': powinv_CR_min,
+        'NUF_threshold': powinv_NUF_threshold,
+        'NUF_min': powinv_NUF_min,
+    }
+    parameters['scarcity'] = {
+        'penalization': scarcity_penalization,
+        'gas_premium': gas_premium
+    }
+    parameters['voll'] = voll
+    parameters['min_spread'] = min_spread
+    parameters['gov_dr'] = gov_dr
+    parameters['exports_value'] = exports_value
+
     parameters_powinv = pd.DataFrame(columns=["Name", "Value"])
     # Store parameters in
 
@@ -198,10 +216,10 @@ def mod0_read_data_save_duck(file_name):
     # 1. select columns that start with the prefix
     selected_cols = [col for col in agents.columns if str(col).startswith(Agents.types)]
     # 2. extract the agent types
-    types = [str(col)[len(Agents.types):].strip(" /").strip() for col in selected_cols]
-    types_df = pd.DataFrame(types, columns=["Name"])
+    agent_type_names = [str(col)[len(Agents.types):].strip(" /").strip() for col in selected_cols]
+    types_df = pd.DataFrame(agent_type_names, columns=["Name"])
 
-    rename_map = dict(zip(selected_cols, types))
+    rename_map = dict(zip(selected_cols, agent_type_names))
     agents = agents.rename(columns=rename_map)
 
     agent_profiles = agents[agents["rates"].notna()]
@@ -209,7 +227,7 @@ def mod0_read_data_save_duck(file_name):
     agent_profiles_toTable = agent_profiles[["Name", "rates"]]
     population_df = agent_profiles.melt(
         id_vars=["Name"],  # FK to agent_profiles
-        value_vars=types,  # the agent-type columns: Innovators, Early adopters, Majority, Laggards
+        value_vars=agent_type_names,  # the agent-type columns: Innovators, Early adopters, Majority, Laggards
         var_name="agent_type",  # FK to agent_types
         value_name="value"
     ).rename(columns={"Name": "agent_profile"})
@@ -252,7 +270,7 @@ def mod0_read_data_save_duck(file_name):
 
     criteria_weights_df = weight_profiles.melt(
         id_vars=["Name"],  # FK to agent_criteria
-        value_vars=types,  # the agent-type columns: Innovators, Early adopters, Majority, Laggards
+        value_vars=agent_type_names,  # the agent-type columns: Innovators, Early adopters, Majority, Laggards
         var_name="agent_type",  # FK to agent_types
         value_name="value"
     ).rename(columns={"Name": "agent_criteria"})
@@ -272,11 +290,11 @@ def mod0_read_data_save_duck(file_name):
         print("error in saving criteria_weights_df to duckdb")
 
     # Reuse the already name-based parse above instead of re-reading the sheet by column letter
-    agent_types = types
+    agent_types = agent_type_names
     multiCriteria_categories = wp["Name"].tolist()
     agents_dr = agent_profiles_toTable["rates"].to_numpy()
-    agents_populations = agent_profiles[types].fillna(0).to_numpy() / 100
-    weights_multiCriteria = weight_profiles[types].fillna(0).to_numpy()
+    agents_populations = agent_profiles[agent_type_names].fillna(0).to_numpy() / 100
+    weights_multiCriteria = weight_profiles[agent_type_names].fillna(0).to_numpy()
     agent_profiles = agent_profiles_toTable["Name"].tolist()
 
     # Store in dictionary
@@ -293,36 +311,36 @@ def mod0_read_data_save_duck(file_name):
 
     # === Activities sheet ===
     print('--Reading activities sheet')
-    activities = pd.read_excel(
+    activities_df = pd.read_excel(
         file_name,
         sheet_name='Activities',
         skiprows=6,
         header=[0, 1],
         keep_default_na=False,
     )
-    activities.columns = flatten_header(activities.columns)
+    activities_df.columns = flatten_header(activities_df.columns)
 
     prefix = Parameters.Activities.periods_start
 
     # 1. select columns that start with the prefix
-    selected_cols = [col for col in activities.columns if str(col).startswith(prefix)]
+    selected_cols = [col for col in activities_df.columns if str(col).startswith(prefix)]
 
     # 2. extract the years from those column names, and cast to int
     periods = [int(re.search(r'\d+', str(col)[len(prefix):]).group()) for col in selected_cols]
 
     print(selected_cols)
     print(periods)
-    activities.columns = [rename_volumes_col(col) for col in activities.columns]
+    volume_cols = [rename_volumes_col(col) for col in selected_cols]
+    activities_df.columns = [rename_volumes_col(col) for col in activities_df.columns]
 
-    activities = activities.rename(columns={Activities.activities_names: "Name"})
-    activities = activities.rename(columns={Activities.activity_resolution: "activity_resolution"})
-    activities = activities.rename(columns={Activities.activity_type_act: "activity_type"})
-    activities = activities.rename(columns={Activities.activity_label: "energy_label"})
-    activities = activities.rename(columns={Activities.activity_agent: "agent_profile"})
-    activities_df=activities
+    activities_df = activities_df.rename(columns={Activities.activities_names: "Name"})
+    activities_df = activities_df.rename(columns={Activities.activity_resolution: "activity_resolution"})
+    activities_df = activities_df.rename(columns={Activities.activity_type_act: "activity_type"})
+    activities_df = activities_df.rename(columns={Activities.activity_label: "energy_label"})
+    activities_df = activities_df.rename(columns={Activities.activity_agent: "agent_profile"})
 
     try:
-        cols_sql = ",\n    ".join(f'"{col}" {dtype_to_sql(dt)}' for col, dt in activities.dtypes.items())
+        cols_sql = ",\n    ".join(f'"{col}" {dtype_to_sql(dt)}' for col, dt in activities_df.dtypes.items())
 
         create_stmt = f"""
         CREATE TABLE activities (
@@ -347,13 +365,24 @@ def mod0_read_data_save_duck(file_name):
     except Exception as e:
         print(f"error in saving periods to duckdb: {e}")
 
-    activities['drivers'] = {}
-    activities['energies'] = {}
-    activities['emissions'] = {}
-    activities['electricity'] = {}
-    activities['gaseous'] = {}
-    activities['infra'] = {}
-    activities['prices'] = {}
+    # === Activities (in-memory dict, matches mod0_read_data.py's structure) ===
+    activity_volumes = activities_df[volume_cols].fillna(0).to_numpy()
+    activities = {
+        'names': activities_df["Name"].tolist(),
+        'periods': np.array(periods),
+        'volumes': activity_volumes,
+        'resolution': activities_df["activity_resolution"].tolist(),
+        'types': activities_df["activity_type"].tolist(),
+        'labels': activities_df["energy_label"].tolist(),
+        'agents': activities_df["agent_profile"].tolist(),
+        'drivers': {},
+        'energies': {},
+        'emissions': {},
+        'electricity': {},
+        'gaseous': {},
+        'infra': {},
+        'prices': {},
+    }
 
     # === Hourly profiles sheet ===
     print('--Reading hourly profiles sheet')
