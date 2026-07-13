@@ -16,10 +16,14 @@ from Constants.Parameters import Activities, Agents, Types, Technologies, Infras
 warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
 
 
-def dict_to_df_padded_zero(data):
+def dict_to_df_padded_nan(data):
+    # Pad with NaN, not 0: columns here can be legitimately shorter than others
+    # (e.g. fewer initialized energy prices than energy labels), and padding with
+    # a real number would be indistinguishable from actual data once round-tripped
+    # through the database.
     max_len = max(len(v) for v in data.values())
     padded = {
-        k: list(v) + [0] * (max_len - len(v))
+        k: list(v) + [np.nan] * (max_len - len(v))
         for k, v in data.items()
     }
     return pd.DataFrame(padded)
@@ -71,7 +75,8 @@ def build_policy_long_df(policy_matrix, periods):
     long_df = pd.DataFrame({"value": values.reshape(-1)}, index=idx).reset_index()
     long_df["activity_name"] = long_df["row"].map(lambda i: activity_names[i])
     long_df["unit"] = long_df["row"].map(lambda i: units[i])
-    return long_df[["activity_name", "unit", "period", "value"]]
+    long_df["seq"] = long_df["row"]
+    return long_df[["activity_name", "unit", "period", "value", "seq"]]
 
 def mod0_read_data_save_duck(file_name):
 
@@ -187,9 +192,10 @@ def mod0_read_data_save_duck(file_name):
         'labels' : energy_labels,
         'price init' : energy_price_init,
     }
-    df_activities = pd.DataFrame(activity_type, columns=["activity_type"])
-    df_sectors = pd.DataFrame(activity_type, columns=["sectors"])
-    df_energy = dict_to_df_padded_zero(types['energy'])
+    df_activities = pd.DataFrame({"activity_type": activity_type, "seq": range(len(activity_type))})
+    df_sectors = pd.DataFrame({"sectors": sectors, "seq": range(len(sectors))})
+    df_energy = dict_to_df_padded_nan(types['energy'])
+    df_energy["seq"] = range(len(df_energy))
     try:
         con.execute("CREATE TABLE activity_types AS SELECT * FROM df_activities")
         con.execute("ALTER TABLE activity_types ADD PRIMARY KEY (activity_type)")
@@ -217,14 +223,15 @@ def mod0_read_data_save_duck(file_name):
     selected_cols = [col for col in agents.columns if str(col).startswith(Agents.types)]
     # 2. extract the agent types
     agent_type_names = [str(col)[len(Agents.types):].strip(" /").strip() for col in selected_cols]
-    types_df = pd.DataFrame(agent_type_names, columns=["Name"])
+    types_df = pd.DataFrame({"Name": agent_type_names, "seq": range(len(agent_type_names))})
 
     rename_map = dict(zip(selected_cols, agent_type_names))
     agents = agents.rename(columns=rename_map)
 
     agent_profiles = agents[agents["rates"].notna()]
     agent_profiles["rates"] = agent_profiles["rates"] / 100
-    agent_profiles_toTable = agent_profiles[["Name", "rates"]]
+    agent_profiles_toTable = agent_profiles[["Name", "rates"]].copy()
+    agent_profiles_toTable["seq"] = range(len(agent_profiles_toTable))
     population_df = agent_profiles.melt(
         id_vars=["Name"],  # FK to agent_profiles
         value_vars=agent_type_names,  # the agent-type columns: Innovators, Early adopters, Majority, Laggards
@@ -260,7 +267,8 @@ def mod0_read_data_save_duck(file_name):
     mask = weight_profiles.astype(str).apply(lambda row: row.str.contains(r"\[ad\]", regex=True, na=False)).any(axis=1)
     weight_profiles = weight_profiles[~mask]
     weight_profiles = weight_profiles.drop(columns=["rates"])
-    wp=weight_profiles[['Name']]
+    wp = weight_profiles[['Name']].copy()
+    wp["seq"] = range(len(wp))
 
     try:
         con.execute("CREATE TABLE agent_criteria AS SELECT * FROM wp")
@@ -338,6 +346,7 @@ def mod0_read_data_save_duck(file_name):
     activities_df = activities_df.rename(columns={Activities.activity_type_act: "activity_type"})
     activities_df = activities_df.rename(columns={Activities.activity_label: "energy_label"})
     activities_df = activities_df.rename(columns={Activities.activity_agent: "agent_profile"})
+    activities_df["seq"] = range(len(activities_df))
 
     try:
         cols_sql = ",\n    ".join(f'"{col}" {dtype_to_sql(dt)}' for col, dt in activities_df.dtypes.items())
@@ -402,7 +411,7 @@ def mod0_read_data_save_duck(file_name):
 
     print('--Saving hourly profiles to duckdb')
     try:
-        profile_types_df = pd.DataFrame({"name": profile_types})
+        profile_types_df = pd.DataFrame({"name": profile_types, "seq": range(len(profile_types))})
         con.execute(build_create_table_sql("hourly_profile_types", profile_types_df, pk="name"))
         con.execute("INSERT INTO hourly_profile_types SELECT * FROM profile_types_df")
 
@@ -613,6 +622,7 @@ def mod0_read_data_save_duck(file_name):
     try:
         technologies_df = pd.DataFrame({
             "id": tech_balancers,
+            "seq": range(len(tech_balancers)),
             "category": tech_categories,
             "sector": tech_sector,
             "subsector": tech_subsector,
@@ -736,6 +746,7 @@ def mod0_read_data_save_duck(file_name):
     try:
         infrastructure_df = pd.DataFrame({
             "id": tech_infra,
+            "seq": range(len(tech_infra)),
             "category": tech_categories_infra,
             "name": tech_names_infra,
             "unit": tech_units_infra,

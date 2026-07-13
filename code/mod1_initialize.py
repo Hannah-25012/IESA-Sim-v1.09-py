@@ -1,37 +1,38 @@
 # File to intitialize model dimensions and variables
 import numpy as np
 from initialize_prices import initialize_prices
+from datastructures import Struct
 
 def mod1_initialize(settings, types, activities, technologies, agents, policies):
 
     # Extract inputs
-    energy_labels = types['energy'] ['labels']
-    energyPrice_init = types['energy'] ['price init']
-    periods = activities['periods']
-    activity_names = activities['names']
-    activity_type_act = activities['types']
-    activity_resolution = activities['resolution']
-    activity_agent = activities['agents']
-    activity_label = activities['labels']
-    tech_balancers = technologies['balancers']['ids']
-    tech_categories = technologies['balancers']['categories']
-    ec_lifetime = technologies['balancers']['costs']['lifetimes']
-    activity_per_tech = technologies['balancers']['activities']
-    vom_cost = technologies['balancers']['costs']['voms']
+    energy_labels = types.energy.labels
+    energyPrice_init = types.energy.price_init
+    periods = activities.periods
+    activity_names = activities.names
+    activity_type_act = activities.types
+    activity_resolution = activities.resolution
+    activity_agent = activities.agents
+    activity_label = activities.labels
+    tech_balancers = technologies.balancers.ids
+    tech_categories = technologies.balancers.categories
+    ec_lifetime = technologies.balancers.costs.lifetimes
+    activity_per_tech = technologies.balancers.activities
+    vom_cost = technologies.balancers.costs.voms
     vom_cost_init = vom_cost[:, 0]
-    flexibility_range = technologies['balancers']['flexibility']['range']
-    tech_stock_exist = technologies['balancers']['stocks']['initial']
-    tech_stock_dec = technologies['balancers']['stocks']['dec_planned']
-    tech_infra = technologies['infra']['ids']
-    activity_per_tech_infra = technologies['infra']['activity']
-    ec_lifetime_infra = technologies['infra']['costs']['lifetimes']
-    agent_profiles = agents['profiles']
-    agents_dr = agents['rates']
-    agent_types = agents['types']
-    multi_criteria_categories = agents['criteria']['categories']
-    taxes_activities = policies['taxes']['activities']
-    taxes_values = np.array(policies['taxes']['values'])
-    sectors = types['sectors']
+    flexibility_range = technologies.balancers.flexibility.range
+    tech_stock_exist = technologies.balancers.stocks.initial
+    tech_stock_dec = technologies.balancers.stocks.dec_planned
+    tech_infra = technologies.infra.ids
+    activity_per_tech_infra = technologies.infra.activity
+    ec_lifetime_infra = technologies.infra.costs.lifetimes
+    agent_profiles = agents.profiles
+    agents_dr = agents.rates
+    agent_types = agents.types
+    multi_criteria_categories = agents.criteria.categories
+    taxes_activities = policies.taxes.activities
+    taxes_values = np.array(policies.taxes.values)
+    sectors = types.sectors
 
     # Hardcoded model parameters
     nH = 8760
@@ -159,33 +160,33 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
         nIp += 1
     nIp = min(max(nIp, nIp_min), nIp_max)
 
-    dimensions = {
-        'nH': nH,
-        'nDy': nDy,
-        'nHd': nHd,
-        'nIp': nIp,
-        'nIb': settings['iterations']['balancing'],
-        'nId': settings['iterations']['dispatch'],
-        'nP': len(periods),
-        'nTb': len(tech_balancers),
-        'nTd': np.sum(technologies_driver),
-        'nTc': np.sum(technologies_emission),
-        'nTi': len(tech_infra),
-        'nA': len(activity_names),
-        'nAe': len(activities_energy),
-        'nAd': len(activities_driver),
-        'nAc': len(activities_emission),
-        'nAk': len(activities_elec),
-        'nAg': len(activities_gaseous),
-        'nAi': len(activities_infra),
-        'nEl': len(energy_labels),
-        'nAT': len(agent_types),
-        'nMC': len(multi_criteria_categories),
-        'nCc': len(cost_categories),
-        'nTL': len(categories_LCOPs),
-        'nRp': nRp,
-        'nPc': len(policy_cashflows_categories),
-    }
+    dimensions = Struct(
+        nH=nH,
+        nDy=nDy,
+        nHd=nHd,
+        nIp=nIp,
+        nIb=settings['iterations']['balancing'],
+        nId=settings['iterations']['dispatch'],
+        nP=len(periods),
+        nTb=len(tech_balancers),
+        nTd=np.sum(technologies_driver),
+        nTc=np.sum(technologies_emission),
+        nTi=len(tech_infra),
+        nA=len(activity_names),
+        nAe=len(activities_energy),
+        nAd=len(activities_driver),
+        nAc=len(activities_emission),
+        nAk=len(activities_elec),
+        nAg=len(activities_gaseous),
+        nAi=len(activities_infra),
+        nEl=len(energy_labels),
+        nAT=len(agent_types),
+        nMC=len(multi_criteria_categories),
+        nCc=len(cost_categories),
+        nTL=len(categories_LCOPs),
+        nRp=nRp,
+        nPc=len(policy_cashflows_categories),
+    )
 
     # === Initialize model variables ===
     print('--Initializing model variables')
@@ -228,78 +229,78 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     policy_cashflows = np.zeros((dimensions['nPc'], dimensions['nP']))
 
     # === Saving outputs ===
-    types['energy']['primary'] = primary_energy
-    types['policy_cashflows_categories'] = policy_cashflows_categories
+    types.energy.primary = primary_energy
+    types.policy_cashflows_categories = policy_cashflows_categories
 
-    activities['drivers']['names'] = activities_driver
-    activities['energies']['names'] = activities_energy
-    activities['emissions']['names'] = activities_emission
-    activities['emissions']['targets'] = emission_targets
-    activities['electricity']['names'] = activities_elec
-    activities['electricity']['coords'] = activities_elec_coord
-    activities['gaseous']['names'] = activities_gaseous
-    activities['gaseous']['coords'] = activities_gaseous_coord
-    activities['infra']['names'] = activities_infra
-    activities['energies']['prices'] = {
-        'yearly': energy_prices,
-        'initialized': initialized_energy_prices,
-        'hourly': energy_prices_hourly,
-        'ranges': energy_prices_ranges,
-        'price_ranges': price_ranges,
-        'price_ranges_hours': price_ranges_hours,
-    }
-    activities['energies']['scarcity'] = energy_scarcity
-    activities['emissions']['prices'] = {
-        'yearly': emission_prices,
-        'initialized': initialized_emission_prices
-    }
-    activities['prices'] = {
-        'initialized': initialized_prices,
-        'hourly': prices_hourly
-    }
+    activities.drivers.names = activities_driver
+    activities.energies.names = activities_energy
+    activities.emissions.names = activities_emission
+    activities.emissions.targets = emission_targets
+    activities.electricity.names = activities_elec
+    activities.electricity.coords = activities_elec_coord
+    activities.gaseous.names = activities_gaseous
+    activities.gaseous.coords = activities_gaseous_coord
+    activities.infra.names = activities_infra
+    activities.energies.prices = Struct(
+        yearly=energy_prices,
+        initialized=initialized_energy_prices,
+        hourly=energy_prices_hourly,
+        ranges=energy_prices_ranges,
+        price_ranges=price_ranges,
+        price_ranges_hours=price_ranges_hours,
+    )
+    activities.energies.scarcity = energy_scarcity
+    activities.emissions.prices = Struct(
+        yearly=emission_prices,
+        initialized=initialized_emission_prices,
+    )
+    activities.prices = Struct(
+        initialized=initialized_prices,
+        hourly=prices_hourly,
+    )
 
-    technologies['balancers']['drivers']['names'] = technologies_driver
-    technologies['balancers']['energies']['names'] = technologies_energy
-    technologies['balancers']['emissions']['names'] = technologies_emission
-    technologies['balancers']['stocks']['evolution'] = tech_stock
-    technologies['balancers']['use'] = {
-        'yearly': tech_use,
-        'hourly': tech_use_hourly
-    }
-    technologies['balancers']['investments'] = investments
-    technologies['balancers']['retrofittings'] = retrofittings
-    technologies['balancers']['decommissionings'] = decommissionings
-    technologies['balancers']['generators'] = {
-        'NUF': generator_norm_ut_fact,
-        'CR': generator_capt_rate,
-        'CF': generator_cash_flow
-    }
-    technologies['balancers']['flexibility']['range_days'] = flexibility_range_days
-    technologies['balancers']['costs']['annuity'] = annuity_fact
-    technologies['balancers']['lcops'] = {
-        'categories': categories_LCOPs,
-        'values': tech_LCOPs,
-        'matrix': tech_LCOPs_matrix
-    }
-    technologies['balancers']['mca']['matrix'] = multi_criteria_performance_tech
-    technologies['balancers']['choices_agent'] = tech_choices_agent
-    technologies['balancers']['choices_lcop_order'] = tech_choices_LCOP_order
-    technologies['infra']['stocks']['evolution'] = tech_stock_infra
-    technologies['infra']['investments'] = investments_infra
-    technologies['infra']['costs']['annuity'] = annuity_fact_infra
+    technologies.balancers.drivers.names = technologies_driver
+    technologies.balancers.energies.names = technologies_energy
+    technologies.balancers.emissions.names = technologies_emission
+    technologies.balancers.stocks.evolution = tech_stock
+    technologies.balancers.use = Struct(
+        yearly=tech_use,
+        hourly=tech_use_hourly,
+    )
+    technologies.balancers.investments = investments
+    technologies.balancers.retrofittings = retrofittings
+    technologies.balancers.decommissionings = decommissionings
+    technologies.balancers.generators = Struct(
+        NUF=generator_norm_ut_fact,
+        CR=generator_capt_rate,
+        CF=generator_cash_flow,
+    )
+    technologies.balancers.flexibility.range_days = flexibility_range_days
+    technologies.balancers.costs.annuity = annuity_fact
+    technologies.balancers.lcops = Struct(
+        categories=categories_LCOPs,
+        values=tech_LCOPs,
+        matrix=tech_LCOPs_matrix,
+    )
+    technologies.balancers.mca.matrix = multi_criteria_performance_tech
+    technologies.balancers.choices_agent = tech_choices_agent
+    technologies.balancers.choices_lcop_order = tech_choices_LCOP_order
+    technologies.infra.stocks.evolution = tech_stock_infra
+    technologies.infra.investments = investments_infra
+    technologies.infra.costs.annuity = annuity_fact_infra
 
-    results = {
-        'emissions': emissions,
-        'emissions_sector_pos': emissions_sector_pos,
-        'emissions_sector_neg': emissions_sector_neg,
-        'emissions_stored': emissions_stored,
-        'primary': primary_energy,
-        'exports': energy_exports,
-        'costs': {
-            'categories': cost_categories,
-            'system': system_costs
-        },
-        'policy_cashflows': policy_cashflows
-    }
+    results = Struct(
+        emissions=emissions,
+        emissions_sector_pos=emissions_sector_pos,
+        emissions_sector_neg=emissions_sector_neg,
+        emissions_stored=emissions_stored,
+        primary=primary_energy,
+        exports=energy_exports,
+        costs=Struct(
+            categories=cost_categories,
+            system=system_costs,
+        ),
+        policy_cashflows=policy_cashflows,
+    )
 
     return dimensions, types, activities, technologies, results
