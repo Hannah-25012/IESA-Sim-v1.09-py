@@ -29,6 +29,8 @@ class Activity:
         self.technologies = []           # Technology objects with .activity is this
         self.infrastructure = []         # Infrastructure objects with .activity is this
         self.flexible_technologies = []  # Technology objects benefiting from flexibility here
+        self.energy_idx = None           # position within activities.energies.names, or None
+        self.elec_idx = None             # position within activities.electricity.names, or None
 
     @property
     def is_driver(self):
@@ -128,12 +130,36 @@ class Technology:
         return f"Technology({self.id!r})"
 
 
-def link_entities(activities, technologies):
-    """Build the Activity/Technology object graph from the Struct-based data
-    (post mod1_initialize), resolving foreign keys into real object references.
+class Infrastructure:
+    def __init__(self, idx, id_, category, name, unit, activity_name,
+                 cap2act, lifetime, stock_initial, costs_investment, costs_fom):
+        self.idx = idx
+        self.id = id_
+        self.category = category
+        self.name = name
+        self.unit = unit
 
-    Returns (activity_list, tech_list), both ordered to match the underlying
-    arrays (activity_list[i].idx == i, matching activities.names[i], etc.).
+        self.activity_name = activity_name
+        self.activity = None  # Activity, resolved by link_entities()
+
+        self.cap2act = cap2act
+        self.lifetime = lifetime
+        self.stock_initial = stock_initial
+        self.costs_investment = costs_investment  # view: 1D over periods
+        self.costs_fom = costs_fom                # view: 1D over periods
+
+    def __repr__(self):
+        return f"Infrastructure({self.id!r})"
+
+
+def link_entities(activities, technologies):
+    """Build the Activity/Technology/Infrastructure object graph from the
+    Struct-based data (post mod1_initialize), resolving foreign keys into
+    real object references.
+
+    Returns (activity_list, tech_list, infra_list), each ordered to match the
+    underlying arrays (activity_list[i].idx == i, matching activities.names[i],
+    etc.).
     """
     activity_list = []
     for i, name in enumerate(activities.names):
@@ -146,6 +172,12 @@ def link_entities(activities, technologies):
             volumes=activities.volumes[i, :],
         ))
     by_name = {a.name: a for a in activity_list}
+
+    energy_by_name = {name: i for i, name in enumerate(activities.energies.names)}
+    elec_by_name = {name: i for i, name in enumerate(activities.electricity.names)}
+    for a in activity_list:
+        a.energy_idx = energy_by_name.get(a.name)
+        a.elec_idx = elec_by_name.get(a.name)
 
     balancers = technologies.balancers
     tech_list = []
@@ -193,10 +225,20 @@ def link_entities(activities, technologies):
                 tech.flexibility_activity.flexible_technologies.append(tech)
 
     infra = technologies.infra
+    infra_list = []
     for i, infra_id in enumerate(infra.ids):
-        activity = by_name.get(infra.activity[i])
-        if activity is not None:
-            activity.infrastructure.append(infra_id)
+        infra_list.append(Infrastructure(
+            idx=i, id_=infra_id,
+            category=infra.categories[i], name=infra.names[i], unit=infra.units[i],
+            activity_name=infra.activity[i],
+            cap2act=infra.cap2acts[i], lifetime=infra.costs.lifetimes[i],
+            stock_initial=infra.stocks.initial[i],
+            costs_investment=infra.costs.investments[i, :], costs_fom=infra.costs.foms[i, :],
+        ))
+    for infra_obj in infra_list:
+        infra_obj.activity = by_name.get(infra_obj.activity_name)
+        if infra_obj.activity is not None:
+            infra_obj.activity.infrastructure.append(infra_obj)
 
     for from_id, to_id in zip(technologies.retrofittings["from"], technologies.retrofittings["to"]):
         from_tech = by_id.get(from_id)
@@ -204,4 +246,4 @@ def link_entities(activities, technologies):
         if from_tech is not None and to_tech is not None:
             from_tech.retrofit_options.append(to_tech)
 
-    return activity_list, tech_list
+    return activity_list, tech_list, infra_list

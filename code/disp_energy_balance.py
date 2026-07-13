@@ -2,23 +2,26 @@
 import numpy as np
 
 def disp_energy_balance(dimensions, activities, technologies, profiles, tech_use_hourly, report_gap, iP):
-    
+
     # Export Parameters
     nIb = dimensions['nIb'] # # of iterations in the loop
-    nA = dimensions['nA'] 
-    nTb = dimensions['nTb'] 
-    activities_names = activities['names']
-    activity_resolution = activities['resolution']
-    activities_net_volumes = activities['volumes'][:, iP] 
-    activity_per_tech = technologies['balancers']['activities']
-    activity_balances = technologies['balancers']['activity_balances'] 
-    tech_stock = technologies['balancers']['stocks']['evolution'][:, iP] 
-    tech_categories = technologies['balancers']['categories']
-    cap2act = technologies['balancers']['cap2acts'] 
-    hourly_profile_tech = technologies['balancers']['profiles']
-    shedding_capacity = technologies['balancers']['shedding']['capacity']
-    profile_type = profiles['types']
-    hourly_profiles = profiles['shapes'] 
+    nA = dimensions['nA']
+    nTb = dimensions['nTb']
+    activities_names = activities.names
+    activity_resolution = activities.resolution
+    activities_net_volumes = activities.volumes[:, iP]
+    activity_per_tech = technologies.balancers.activities
+    activity_balances = technologies.balancers.activity_balances
+    tech_stock = technologies.balancers.stocks.evolution[:, iP]
+    tech_categories = technologies.balancers.categories
+    cap2act = technologies.balancers.cap2acts
+    hourly_profile_tech = technologies.balancers.profiles
+    shedding_capacity = technologies.balancers.shedding.capacity
+    profile_type = profiles.types
+    hourly_profiles = profiles.shapes
+    # Each hourly profile type's shape, resolved once instead of re-scanning
+    # profile_type for every technology that uses it.
+    profile_shape_by_type = {name: hourly_profiles[:, i] for i, name in enumerate(profile_type)}
 
     # Iterate in a loop
     tech_use = np.sum(tech_use_hourly, axis=0)
@@ -69,8 +72,7 @@ def disp_energy_balance(dimensions, activities, technologies, profiles, tech_use
                     tech_sel = np.where(coord_tech_act)[0]
                     nT = np.sum(coord_tech_act)
                     for iT in range(nT):
-                        coord_profile = np.array(profile_type) == hourly_profile_tech[tech_sel[iT]]
-                        tech_use_hourly[:, tech_sel[iT]] = tech_use[tech_sel[iT]] * hourly_profiles[:, coord_profile].flatten()
+                        tech_use_hourly[:, tech_sel[iT]] = tech_use[tech_sel[iT]] * profile_shape_by_type[hourly_profile_tech[tech_sel[iT]]]
         
     tech_use = (np.sum(tech_use_hourly, axis=0))
 

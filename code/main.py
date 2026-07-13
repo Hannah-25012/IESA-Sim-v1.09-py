@@ -52,13 +52,15 @@ def main(settings):
     )
     print("Initialization complete.")
 
-    # Build the Activity/Technology object graph (real cross-references,
-    # resolved once here) on top of the now-finalized arrays, so invest/dispatch/
-    # post-processing code can navigate relationships (tech.activity,
-    # activity.technologies, ...) instead of re-deriving index lists.
-    activity_entities, tech_entities = link_entities(activities, technologies)
+    # Build the Activity/Technology/Infrastructure object graph (real
+    # cross-references, resolved once here) on top of the now-finalized
+    # arrays, so invest/dispatch/post-processing code can navigate
+    # relationships (tech.activity, activity.technologies, ...) instead of
+    # re-deriving index lists.
+    activity_entities, tech_entities, infra_entities = link_entities(activities, technologies)
     activities.entities = activity_entities
     technologies.balancers.entities = tech_entities
+    technologies.infra.entities = infra_entities
     print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
     # Begin the sequential running of modules for all periods

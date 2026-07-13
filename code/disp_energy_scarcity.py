@@ -5,36 +5,27 @@ def disp_energy_scarcity(dimensions, activities, technologies, iP):
 
     # Extract Parameters
     nAe = dimensions['nAe']
-    nTb = dimensions['nTb']
-    activities_names = activities['names']
-    activities_energy = activities['energies']['names']
-    energy_scarcity = activities['energies']['scarcity'][:, iP]
-    activity_per_tech = technologies['balancers']['activities']
-    activity_balances = technologies['balancers']['activity_balances']
-    tech_categories = technologies['balancers']['categories']
-    cap2act = technologies['balancers']['cap2acts']
-    tech_stock = technologies['balancers']['stocks']['evolution'][:, iP]
-    tech_use = technologies['balancers']['use']['yearly'][:, iP]
+    energy_scarcity = activities.energies.scarcity[:, iP]
+    tech_entities = technologies.balancers.entities
+    tech_stock = technologies.balancers.stocks.evolution[:, iP]
+    tech_use = technologies.balancers.use.yearly[:, iP]
 
     # Begin the loop to quantify the differences between use and available energy
     energy_scarcity_new = np.zeros((nAe, 1))
-    for iTb in range(nTb):
-        if tech_categories[iTb] == 'Primary':
+    for tech in tech_entities:
+        if tech.category == 'Primary' and tech.activity is not None:
 
-            # Identify the energy activity which has scarcity
-            iAe = np.array([name == activity_per_tech[iTb] for name in activities_energy]) # Create boolean arrays to match the corresponding activity names
-            iA = np.array([name == activity_per_tech[iTb] for name in activities_names])
-            
             # Quantify the scarcity
-            activity_balance_val = activity_balances[iTb, iA][0]
-            scarcity = tech_use[iTb] - tech_stock[iTb] * cap2act[iTb] * activity_balance_val
+            activity_balance_val = tech.activity_balances[tech.activity.idx]
+            scarcity = tech_use[tech.idx] - tech_stock[tech.idx] * tech.cap2act * activity_balance_val
             scarcity = max(0, scarcity)
-            
-            # Add the scarcity to the account
-            energy_scarcity_new[iAe, 0] = energy_scarcity_new[iAe, 0] + scarcity
+
+            # Add the scarcity to the account, if this technology's main activity is an energy activity
+            if tech.activity.energy_idx is not None:
+                energy_scarcity_new[tech.activity.energy_idx, 0] += scarcity
 
     # Save Variables
-    activities['energies']['scarcity'][:, iP] = energy_scarcity + energy_scarcity_new.flatten()
-    
+    activities.energies.scarcity[:, iP] = energy_scarcity + energy_scarcity_new.flatten()
+
     return activities
 

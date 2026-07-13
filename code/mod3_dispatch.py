@@ -11,7 +11,7 @@ def mod3_dispatch(dimensions, parameters, activities, technologies, profiles, po
     nId = dimensions['nId']
     nTb = dimensions['nTb']
     nH = dimensions['nH']
-    initialized_prices = activities['prices']['initialized'][:, iP]
+    initialized_prices = activities.prices.initialized[:, iP]
 
     # Initialize prices
     prices_hourly = np.ones((nH, 1)) * initialized_prices
@@ -50,15 +50,15 @@ def mod3_dispatch(dimensions, parameters, activities, technologies, profiles, po
     )
 
     # Save Variables
-    activities['prices']['hourly'][:, :, iP] = prices_hourly 
-    # CHECK: tech_use values slightly off in last few decimals compared to matlab. matlab values 467 amd 468 don't match (python 466 and 467). 
+    activities.prices.hourly[:, :, iP] = prices_hourly
+    # CHECK: tech_use values slightly off in last few decimals compared to matlab. matlab values 467 amd 468 don't match (python 466 and 467).
     # This concerns small scale storage buffer - Final Gas, large scale storage buffer - Final gas
     # tech_use is derived from tech_use_hourly. tech_use_hourly is correct, so something must be going on in the summation.
-    technologies['balancers']['use']['yearly'][:, iP] = tech_use
-    technologies['balancers']['use']['hourly'][:, :, iP] = tech_use_hourly 
-    technologies['balancers']['stocks']['evolution'][:, iP] = tech_stock
-    technologies['balancers']['investments'][:, iP] = investments
-    technologies['infra']['stocks']['evolution'][:, iP] = tech_stock_infra
-    technologies['infra']['investments'][:, iP] = investments_infra
+    technologies.balancers.use.yearly[:, iP] = tech_use
+    technologies.balancers.use.hourly[:, :, iP] = tech_use_hourly
+    technologies.balancers.stocks.evolution[:, iP] = tech_stock
+    technologies.balancers.investments[:, iP] = investments
+    technologies.infra.stocks.evolution[:, iP] = tech_stock_infra
+    technologies.infra.investments[:, iP] = investments_infra
 
     return activities, technologies

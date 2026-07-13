@@ -15,10 +15,10 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
     nH = dimensions['nH']
     nIp = dimensions['nIp']
     nAk = dimensions['nAk']
-    voll = parameters['voll']
-    min_spread = parameters['min_spread']
-    activities_label = activities['labels']
-    activities_elec = activities['electricity']['names']
+    voll = parameters.voll
+    min_spread = parameters.min_spread
+    activities_label = activities.labels
+    activities_elec = activities.electricity.names
 
     # Initialize power dispatch
     if nId:

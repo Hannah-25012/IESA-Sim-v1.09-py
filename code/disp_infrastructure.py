@@ -4,40 +4,36 @@ import numpy as np
 def disp_infrastructure(dimensions, activities, technologies, tech_use_hourly, tech_stock, iP):
 
     # Extract Parameters
-    nAi = dimensions['nAi']
     nTi = dimensions['nTi']
-    activities_names = activities['names']
-    activities_infra = activities['infra']['names']
-    activity_balances = technologies['balancers']['activity_balances']
-    dispatch_type_tech = technologies['balancers']['dispatch']
-    investments = technologies['balancers']['investments'][:, iP]
+    activity_balances = technologies.balancers.activity_balances
+    tech_entities = technologies.balancers.entities
+    investments = technologies.balancers.investments[:, iP]
     if iP == 0:
-        techstock_exist = technologies['balancers']['stocks']['initial']
+        techstock_exist = technologies.balancers.stocks.initial
     else:
-        techstock_exist = technologies['balancers']['stocks']['evolution'][:, iP-1]
-    activity_per_tech_infra = technologies['infra']['activity']
-    cap2act_infra = technologies['infra']['cap2acts']
-    tech_stock_exist_infra = technologies['infra']['stocks']['initial']
-    
+        techstock_exist = technologies.balancers.stocks.evolution[:, iP-1]
+    tech_stock_exist_infra = technologies.infra.stocks.initial
+
     # Identify the network use of activities that have infrastructure
     investments_infra = np.zeros(nTi) # Preallocate
-    for iAi in range(nAi):
-        coord_act = np.array([act == activities_infra[iAi] for act in activities_names]) # Create boolean arrays for matching strings
-        coord_tech = np.array([apt == activities_infra[iAi] for apt in activity_per_tech_infra])
-        activity_balances_filtered = -activity_balances[:, coord_act] # Select and invert the corresponding columns from activity_balances
+    for activity in activities.entities:
+        if not activity.infrastructure:
+            continue
+
+        # It is assumed each infra-linked activity has exactly one matching infrastructure entry
+        infra_obj = activity.infrastructure[0]
+
+        activity_balances_filtered = -activity_balances[:, activity.idx] # Select and invert the corresponding column
         activity_balances_filtered[activity_balances_filtered > 0] = 0 # Set any positive values to zero
         network_profile = -np.dot(tech_use_hourly, activity_balances_filtered) # Compute the network profile via matrix multiplication
         max_capacity = np.max(network_profile)
-        cap_val = cap2act_infra[coord_tech] # For the matching technology, compute the required capacity. It is assumed that coord_tech selects exactly one entry.
-        ts_exist_val = tech_stock_exist_infra[coord_tech]
-        required_capacity = max(0, max_capacity / cap_val[0] - ts_exist_val[0]) # Take the first element since we assume exactly one match
-        idx = np.where(coord_tech)[0][0] 
-        investments_infra[idx] = required_capacity # Save the required capacity into investments_infra at the position where coord_tech is True
-        
+        required_capacity = max(0, max_capacity / infra_obj.cap2act - infra_obj.stock_initial)
+        investments_infra[infra_obj.idx] = required_capacity
+
     tech_stock_infra = tech_stock_exist_infra + investments_infra
-    
+
     # Determine stocks and investments of buffers
-    coord_buffer = np.array([d == 'Gas buffer' for d in dispatch_type_tech])
+    coord_buffer = np.array([tech.dispatch == 'Gas buffer' for tech in tech_entities])
     nGb = np.sum(coord_buffer)
     if nGb > 0:
 

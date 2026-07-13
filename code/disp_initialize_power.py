@@ -7,30 +7,32 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     nH = dimensions['nH']
     nA = dimensions['nA']
     nAk = dimensions['nAk']
-    activities_names = activities['names']
-    activities_elec = activities['electricity']['names']
-    activity_per_tech = technologies['balancers']['activities']
-    activity_balances = technologies['balancers']['activity_balances']
-    tech_stock = technologies['balancers']['stocks']['evolution'][:, iP]
-    tech_subsector = technologies['balancers']['subsectors']
-    cap2act = technologies['balancers']['cap2acts']
-    vom_cost = technologies['balancers']['costs']['voms'][:, iP]
-    shedding_capacity = technologies['balancers']['shedding']['capacity']
-    shedding_limits = technologies['balancers']['shedding']['limits']
-    shedding_guarantee = technologies['balancers']['shedding']['guarantee']
-    flexibility_form = technologies['balancers']['flexibility']['form']
-    flexibility_capacity = technologies['balancers']['flexibility']['capacity']
-    flexibility_volume = technologies['balancers']['flexibility']['volume']
-    flexibility_losses = technologies['balancers']['flexibility']['losses']
-    flexibility_nonnegotiable = technologies['balancers']['flexibility']['nonnegotiable']
-    flexibility_range_days = technologies['balancers']['flexibility']['range_days']
-    hourly_profile_tech = technologies['balancers']['profiles']
-    profile_type = profiles['types']
-    hourly_profiles = profiles['shapes']
-    interconnector = profiles['interconnectors']
-    price_profiles = profiles['prices'][:, :, iP]
+    activities_names = activities.names
+    elec_activities = [a for a in activities.entities if a.is_electricity]
+    tech_entities = technologies.balancers.entities
+    activity_balances = technologies.balancers.activity_balances
+    tech_stock = technologies.balancers.stocks.evolution[:, iP]
+    tech_subsector = technologies.balancers.subsectors
+    cap2act = technologies.balancers.cap2acts
+    vom_cost = technologies.balancers.costs.voms[:, iP]
+    shedding_capacity = technologies.balancers.shedding.capacity
+    shedding_limits = technologies.balancers.shedding.limits
+    shedding_guarantee = technologies.balancers.shedding.guarantee
+    flexibility_form = technologies.balancers.flexibility.form
+    flexibility_capacity = technologies.balancers.flexibility.capacity
+    flexibility_volume = technologies.balancers.flexibility.volume
+    flexibility_losses = technologies.balancers.flexibility.losses
+    flexibility_nonnegotiable = technologies.balancers.flexibility.nonnegotiable
+    flexibility_range_days = technologies.balancers.flexibility.range_days
+    profile_type = profiles.types
+    hourly_profiles = profiles.shapes
+    # Each hourly profile type's shape, resolved once instead of re-scanning
+    # profile_type for every technology that uses it.
+    profile_shape_by_type = {name: hourly_profiles[:, i] for i, name in enumerate(profile_type)}
+    interconnector = profiles.interconnectors
+    price_profiles = profiles.prices[:, :, iP]
 
-    # === Obtain figures for power dispatch === 
+    # === Obtain figures for power dispatch ===
     # Identify generators, shedders, and interconnectors
     tech_generators_coord = np.array(
         (np.array([subsector == 'Inland generation' for subsector in tech_subsector], dtype=bool) |
@@ -50,12 +52,14 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     gen_balance_hourly = np.zeros((nH, nA, nG))
     elec_demand_hourly = np.zeros((nH, nAk))
     elec_cogenerated = np.zeros((nAk, 1))
- 
+
     # Build the hourly demand profiles of electricity
-    for iAk in range(nAk):
+    for activity in elec_activities:
+        iAk = activity.elec_idx
 
         # Identify technologies that are not generators, shedders, loadshifters, batteries, or interconnectors
-        coord_act = np.array([activity == activities_elec[iAk] for activity in activities_names], dtype=bool)
+        coord_act = np.zeros(nA, dtype=bool)
+        coord_act[activity.idx] = True
         coord_tech = (
             (activity_balances[:, coord_act] != 0).any(axis=1).astype(int) *  # Ensures a column vector
             (1 - tech_shedding_coord.astype(int)) *
@@ -75,31 +79,28 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
             elec_cogenerated[iAk, 0] += max(0, np.sum(tech_use_hourly[:, coord_itb]) * activity_balances[coord_itb, coord_act])
 
     # Get the generators descriptions
+    generator_techs = [t for t in tech_entities if tech_generators_coord[t.idx]]
     gen_vom = vom_cost[tech_generators_coord]
     tech_subsector = np.array(tech_subsector)
     generators_subsector = tech_subsector[tech_generators_coord]
     activity_balance_gen = activity_balances[tech_generators_coord, :]
-    activity_per_tech = np.array(activity_per_tech)
-    generators_electricity = activity_per_tech[tech_generators_coord]
     generators_activity = tech_stock[tech_generators_coord] * cap2act[tech_generators_coord]
-    hourly_profile_tech = np.array(hourly_profile_tech)
-    availability_profiles_generators = hourly_profile_tech[tech_generators_coord]
 
-    for iG in range(nG):
+    for iG, gen in enumerate(generator_techs):
 
         # Identify the electricity activity per generator
-        iA = np.array([name == generators_electricity[iG] for name in activities_names])
-        iAk = np.array([name == generators_electricity[iG] for name in activities_elec])
-        gen_per_elec[iG, iAk] = True
-        activity_balance_gen[iG, iA] = 0
+        gen_per_elec[iG, gen.activity.elec_idx] = True
+        activity_balance_gen[iG, gen.activity.idx] = 0
 
         # Get the hourly availability profiles of the generators
-        coord_profile = np.array([profile == availability_profiles_generators[iG] for profile in profile_type], dtype=bool)
-        gen_availability_hourly[:, iG] = hourly_profiles[:, coord_profile].squeeze() * generators_activity[iG]
+        gen_availability_hourly[:, iG] = profile_shape_by_type[gen.profile] * generators_activity[iG]
 
         # Get the hourly variable costs of the generators
         if generators_subsector[iG] == 'Inland generation':  # Interconnectors
-            elec_generated = activities_elec[iAk]
+            elec_generated = gen.activity.name
+            # NOTE: `interconnector` is a plain list, so this comparison never
+            # matches (a list is never == a string) - this branch is dead in
+            # the current data, preserved as-is rather than silently "fixed".
             if np.sum(interconnector == elec_generated) > 0:
                 coord_IC = (interconnector == elec_generated)
                 gen_xc_costs_hourly[:, iG] = price_profiles[:, coord_IC]
@@ -110,7 +111,8 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     gen_per_elec = gen_per_elec.astype(bool)
 
     # === Obtain figures for shedding of technologies ===
-    nS = np.sum(tech_shedding_coord)
+    shedding_techs = [t for t in tech_entities if tech_shedding_coord[t.idx]]
+    nS = len(shedding_techs)
 
     # Preallocate targets
     shed_min_demand_hourly = np.zeros((nH, nS))
@@ -126,29 +128,25 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     shedding_capacity_values = shedding_capacity[tech_shedding_coord]
 
     # Obtain the min and max profiles
-    operational_profiles_shedding = hourly_profile_tech[tech_shedding_coord]
     tech_stock_shedding = tech_stock[tech_shedding_coord]
     cap2act_shedding = cap2act[tech_shedding_coord]
-    activity_balances_shed = activity_balances[tech_shedding_coord, :]
 
-    for iS in range(nS):
+    for iS, shed in enumerate(shedding_techs):
 
         # Identify which electricity activities are involved
         elec_balance = 0
-        for iAk in range(nAk):
-            coord_act = np.array([activity == activities_elec[iAk] for activity in activities_names], dtype=bool)
-            act_use = -activity_balances_shed[iS, coord_act]
+        for act in elec_activities:
+            act_use = -shed.activity_balances[act.idx]
             if act_use > 0:
-                shed_per_elec[iS, iAk] = True
+                shed_per_elec[iS, act.elec_idx] = True
                 elec_balance = act_use
 
         # Save the shed multiplier
         shed_multiplier[iS, 0] = elec_balance
 
         # Get the hourly availability profiles of the shedding technologies
-        coord_profile = np.array([profile == operational_profiles_shedding[iS] for profile in profile_type], dtype=bool)
         ref_profile = (tech_stock_shedding[iS] * elec_balance *
-                    cap2act_shedding[iS] * hourly_profiles[:, coord_profile].squeeze())
+                    cap2act_shedding[iS] * profile_shape_by_type[shed.profile])
         shed_potential = np.minimum(ref_profile * shedding_limits_values[iS],
                                     tech_stock_shedding[iS] * cap2act_shedding[iS] * shedding_capacity_values[iS])
 
@@ -161,7 +159,8 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     shed_per_elec = shed_per_elec.astype(bool)
 
     # === Obtain figures for load-shifting technologies ===
-    nL = np.sum(tech_loadshifts_coord)
+    loadshift_techs = [t for t in tech_entities if tech_loadshifts_coord[t.idx]]
+    nL = len(loadshift_techs)
 
     # Preallocate targets
     loadshifts_demand_hourly = np.zeros((nH, nL))
@@ -180,30 +179,27 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
         loadshifts_range = flexibility_range_days[tech_loadshifts_coord]
 
         # Obtain reference profiles
-        operational_profiles_loadshifts = hourly_profile_tech[tech_loadshifts_coord]
         tech_stock_loadshifts = tech_stock[tech_loadshifts_coord]
         cap2act_loadshifts = cap2act[tech_loadshifts_coord]
-        activity_balances_loadshifts = activity_balances[tech_loadshifts_coord, :]
 
-        for iL in range(nL):
+        for iL, loadshift in enumerate(loadshift_techs):
 
             # Identify which electricity activities are involved
             elec_balance = 0
-            for iAk in range(nAk):
-                coord_act = np.array([activity == activities_elec[iAk] for activity in activities_names], dtype=bool)
-                act_use = -activity_balances_loadshifts[iL, coord_act]
+            for act in elec_activities:
+                act_use = -loadshift.activity_balances[act.idx]
                 if act_use > 0:
-                    loadshifts_per_elec[iL, iAk] = True
+                    loadshifts_per_elec[iL, act.elec_idx] = True
                     elec_balance = act_use
                     loadshifts_per_uoa[iL, 0] = act_use
 
             # Get the demand profile of the load-shifting technologies
-            coord_profile = np.array([profile == operational_profiles_loadshifts[iL] for profile in profile_type], dtype=bool)
             loadshifts_demand_hourly[:, iL] = (tech_stock_loadshifts[iL] * elec_balance *
-                                            cap2act_loadshifts[iL] * hourly_profiles[:, coord_profile].squeeze())
+                                            cap2act_loadshifts[iL] * profile_shape_by_type[loadshift.profile])
 
     # === Obtain figures for batteries ===
-    nB = np.sum(tech_batteries_coord)
+    battery_techs = [t for t in tech_entities if tech_batteries_coord[t.idx]]
+    nB = len(battery_techs)
 
     # Preallocate targets
     bat_per_elec = np.zeros((nB, nAk), dtype=bool)
@@ -215,29 +211,26 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
 
     # Only if there are batteries
     if nB > 0:
-        
+
         # Extract other necessary parameters
         bat_efficiency = 1 - flexibility_losses[tech_batteries_coord]
         bat_capacity = flexibility_capacity[tech_batteries_coord]
         bat_volume = flexibility_volume[tech_batteries_coord]
         bat_vom = vom_cost[tech_batteries_coord]
         bat_stock = tech_stock[tech_batteries_coord]
-        bat_act = activity_per_tech[tech_batteries_coord]
 
         # Identify the electricity activity
         bat_per_elec = np.zeros((nB, nAk)) # Preallocate
-        for iB in range(nB):
-
-            # Identify the activity
-            iAk = np.array([activity == bat_act[iB] for activity in activities_elec], dtype=bool)
+        for iB, bat in enumerate(battery_techs):
 
             # Save the link
-            bat_per_elec[iB, iAk] = 1
+            bat_per_elec[iB, bat.activity.elec_idx] = 1
 
         bat_per_elec = bat_per_elec.astype(bool)
 
     # === Obtain figures for the interconnectors ===
-    nI = np.sum(tech_interconnectors_coord)
+    interconnector_techs = [t for t in tech_entities if tech_interconnectors_coord[t.idx]]
+    nI = len(interconnector_techs)
 
     # Preallocate targets
     xc_efficiencies = np.zeros((nI, 1))
@@ -249,31 +242,28 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     xc_vom = vom_cost[tech_interconnectors_coord]
 
     # Identify the to and froms and the efficiencies
-    activity_balance_xc = activity_balances[tech_interconnectors_coord, :]
-    interconnector_to = activity_per_tech[tech_interconnectors_coord]
-    interconnector_profiles = hourly_profile_tech[tech_interconnectors_coord]
     techStock_interconnectors = tech_stock[tech_interconnectors_coord]
     cap2act_interconnectors = tech_stock[tech_interconnectors_coord] # FIX: both techStock_interconnectors and cap2act_interconnectors are defined in the same way.
     # Suggested fix by copilot: cap2act_interconnectors = cap2act[tech_interconnectors_coord]
 
-    for iI in range(nI):
+    for iI, xc in enumerate(interconnector_techs):
 
         # Identify the to coordinate
-        iAk_to = np.array([activity == interconnector_to[iI] for activity in activities_elec], dtype=bool)
+        iAk_to = xc.activity.elec_idx
 
         # Identify the from coordinate
-        coord_act = (activity_balance_xc[iI, :] < 0)
-        iAk_from = np.array([activity == activities_names[np.where(coord_act)[0][0]] for activity in activities_elec], dtype=bool)
+        from_idx = np.where(xc.activity_balances < 0)[0][0]
+        from_activity = activities.entities[from_idx]
+        iAk_from = from_activity.elec_idx
 
         # Save the link
         xc_per_elec[iAk_to, iAk_from, iI] = True
 
         # Efficiency
-        xc_efficiencies[iI, 0] = -1 / activity_balance_xc[iI, coord_act][0]
+        xc_efficiencies[iI, 0] = -1 / xc.activity_balances[from_idx]
 
         # Get the hourly availability profiles of the XC technologies
-        coord_profile = np.array([profile == interconnector_profiles[iI] for profile in profile_type], dtype=bool)
-        ref_profile = hourly_profiles[:, coord_profile].squeeze()
+        ref_profile = profile_shape_by_type[xc.profile]
 
         # Supply and demand profiles
         xc_demand[:, iI] = ref_profile * techStock_interconnectors[iI] * cap2act_interconnectors[iI]
@@ -284,10 +274,10 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     return (gen_vom, gen_balance_hourly, gen_availability_hourly, gen_xc_costs_hourly,
             gen_per_elec, elec_demand_hourly, shedding_guarantee_values, shed_max_volume_hourly,
             shed_min_volume_hourly, shed_per_elec, shed_max_demand_hourly,
-            shed_min_demand_hourly, shed_multiplier, loadshifts_efficiencies, loadshifts_capacities, 
+            shed_min_demand_hourly, shed_multiplier, loadshifts_efficiencies, loadshifts_capacities,
             loadshifts_min, loadshifts_per_uoa, loadshifts_range, loadshifts_per_elec,
-            loadshifts_demand_hourly, bat_efficiency, bat_capacity, bat_volume, 
-            bat_per_elec, bat_vom, bat_stock, 
+            loadshifts_demand_hourly, bat_efficiency, bat_capacity, bat_volume,
+            bat_per_elec, bat_vom, bat_stock,
             xc_efficiencies, xc_vom, xc_per_elec, xc_demand, xc_supply, elec_cogenerated,
-            tech_generators_coord, tech_shedding_coord, 
+            tech_generators_coord, tech_shedding_coord,
             tech_loadshifts_coord, tech_batteries_coord, tech_interconnectors_coord)
