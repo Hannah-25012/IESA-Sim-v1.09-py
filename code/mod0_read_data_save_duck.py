@@ -1,6 +1,7 @@
 # File to read data from the excel input file
 from typing import *
 
+import os
 import pandas as pd
 import numpy as np
 import pickle
@@ -31,19 +32,49 @@ def rename_volumes_col(col):
     return col  # leave unchanged if it doesn't match
 
 def dtype_to_sql(dtype):
-    if "int" in str(dtype):
+    if "bool" in str(dtype):
+        return "BOOLEAN"
+    elif "int" in str(dtype):
         return "INTEGER"
     elif "float" in str(dtype):
         return "DOUBLE"
     else:
         return "VARCHAR"
 
+def build_create_table_sql(table_name, df, pk=None, fks=None):
+    cols_sql = ",\n    ".join(f'"{col}" {dtype_to_sql(dt)}' for col, dt in df.dtypes.items())
+    constraints = []
+    if pk:
+        pk_cols = pk if isinstance(pk, str) else ", ".join(pk)
+        constraints.append(f"PRIMARY KEY ({pk_cols})")
+    for col, ref_table, ref_col in (fks or []):
+        constraints.append(f'FOREIGN KEY ("{col}") REFERENCES {ref_table}({ref_col})')
+    parts = [cols_sql] + constraints
+    return f"CREATE TABLE {table_name} (\n    " + ",\n    ".join(parts) + "\n)"
+
+def matrix_to_long_df(row_ids, row_col_name, matrix, col_ids, col_col_name, value_col_name):
+    idx = pd.MultiIndex.from_product([row_ids, col_ids], names=[row_col_name, col_col_name])
+    return pd.DataFrame({value_col_name: np.asarray(matrix).reshape(-1)}, index=idx).reset_index()
+
+def build_policy_long_df(policy_matrix, periods):
+    activity_names = policy_matrix[:, 0]
+    units = policy_matrix[:, 1]
+    values = policy_matrix[:, 2:2 + len(periods)].astype(float)
+    idx = pd.MultiIndex.from_product([range(len(activity_names)), periods], names=["row", "period"])
+    long_df = pd.DataFrame({"value": values.reshape(-1)}, index=idx).reset_index()
+    long_df["activity_name"] = long_df["row"].map(lambda i: activity_names[i])
+    long_df["unit"] = long_df["row"].map(lambda i: units[i])
+    return long_df[["activity_name", "unit", "period", "value"]]
+
 def mod0_read_data_save_duck(file_name):
 
     # Create empty dictionaries to store data that is derived from excel sheets
     parameters, types, activities, profiles, technologies, agents, policies = {}, {}, {}, {}, {}, {}, {}
 
-    con = duckdb.connect("SIMmodel.duckdb")
+    db_path = "SIMmodel.duckdb"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    con = duckdb.connect(db_path)
     # === Parameters sheet ===
     print('--Reading parameters sheet')
     parameters_values = pd.read_excel(file_name, sheet_name='Parameters', usecols="B", skiprows=2, nrows=20).squeeze()
@@ -307,9 +338,18 @@ def mod0_read_data_save_duck(file_name):
         """
         con.execute(create_stmt)
         con.execute("INSERT INTO activities SELECT * FROM activities_df")
-        con.close()
-    except:
-        print("error in saving activities to duckdb")
+        con.execute("ALTER TABLE activities ADD PRIMARY KEY (Name)")
+    except Exception as e:
+        print(f"error in saving activities to duckdb: {e}")
+
+    # === Periods (derived) ===
+    print('--Saving periods to duckdb')
+    try:
+        periods_df = pd.DataFrame({"period": periods, "period_order": list(range(len(periods)))})
+        con.execute(build_create_table_sql("periods", periods_df, pk="period"))
+        con.execute("INSERT INTO periods SELECT * FROM periods_df")
+    except Exception as e:
+        print(f"error in saving periods to duckdb: {e}")
 
     activities['drivers'] = {}
     activities['energies'] = {}
@@ -328,6 +368,24 @@ def mod0_read_data_save_duck(file_name):
     profiles['types'] = profile_types
     profiles['shapes'] = hourly_profiles
 
+    print('--Saving hourly profiles to duckdb')
+    try:
+        profile_types_df = pd.DataFrame({"name": profile_types})
+        con.execute(build_create_table_sql("hourly_profile_types", profile_types_df, pk="name"))
+        con.execute("INSERT INTO hourly_profile_types SELECT * FROM profile_types_df")
+
+        hourly_profiles_long = matrix_to_long_df(
+            range(hourly_profiles.shape[0]), "hour", hourly_profiles, profile_types, "profile_type", "value"
+        )
+        con.execute(build_create_table_sql(
+            "hourly_profiles", hourly_profiles_long,
+            pk=["hour", "profile_type"],
+            fks=[("profile_type", "hourly_profile_types", "name")]
+        ))
+        con.execute("INSERT INTO hourly_profiles SELECT * FROM hourly_profiles_long")
+    except Exception as e:
+        print(f"error in saving hourly profiles to duckdb: {e}")
+
     # === Price profiles sheet ===
     print('--Reading price profiles sheet')
     interconnector_raw = pd.read_excel(file_name, sheet_name='PriceProfiles', usecols="D:J", nrows=1).dropna(axis=1).squeeze().tolist() # MODIFIED: Changed rows to D:J since the price profile sheet was empty otherwise
@@ -343,6 +401,26 @@ def mod0_read_data_save_duck(file_name):
     # Store in dictionary
     profiles['interconnectors'] = interconnector
     profiles['prices'] = price_profiles
+
+    print('--Saving price profiles to duckdb')
+    try:
+        interconnectors_df = pd.DataFrame({"id": range(nIC), "name": interconnector})
+        con.execute(build_create_table_sql("interconnectors", interconnectors_df, pk="id"))
+        con.execute("INSERT INTO interconnectors SELECT * FROM interconnectors_df")
+
+        price_idx = pd.MultiIndex.from_product(
+            [range(price_profiles.shape[0]), range(nIC), periods],
+            names=["hour", "interconnector_id", "period"]
+        )
+        price_profiles_long = pd.DataFrame({"price": price_profiles.reshape(-1)}, index=price_idx).reset_index()
+        con.execute(build_create_table_sql(
+            "price_profiles", price_profiles_long,
+            pk=["hour", "interconnector_id", "period"],
+            fks=[("interconnector_id", "interconnectors", "id"), ("period", "periods", "period")]
+        ))
+        con.execute("INSERT INTO price_profiles SELECT * FROM price_profiles_long")
+    except Exception as e:
+        print(f"error in saving price profiles to duckdb: {e}")
 
     # === Technologies sheet ===
     print('--Reading technologies sheet')
@@ -460,6 +538,86 @@ def mod0_read_data_save_duck(file_name):
         'mca' : {},
     }
 
+    print('--Saving technologies to duckdb')
+    try:
+        technologies_df = pd.DataFrame({
+            "id": tech_balancers,
+            "category": tech_categories,
+            "sector": tech_sector,
+            "subsector": tech_subsector,
+            "name": tech_names,
+            "unit": tech_units,
+            "activity": activity_per_tech,
+            "cap2act": cap2act,
+            "lifetime": ec_lifetime,
+            "dispatch_type": dispatch_type_tech,
+            "hourly_profile": hourly_profile_tech,
+            "social_perception": social_perception_tech,
+            "perceived_complexity": perceived_complexity_tech,
+            "subsidy_subject": subsidy_subject,
+            "feedin_subject": feedin_subject,
+            "shedding_capacity": shedding_capacity,
+            "shedding_limits": shedding_limits,
+            "shedding_guarantee": shedding_guarantee,
+            "flexibility_form": flexibility_form,
+            "flexibility_capacity": flexibility_capacity,
+            "flexibility_volume": flexibility_volume,
+            "flexibility_range": flexibility_range,
+            "flexibility_losses": flexibility_losses,
+            "flexibility_nonnegotiable": flexibility_nonnegotiable,
+            "buffer_up": buffer_up,
+            "buffer_down": buffer_down,
+            "buffer_capacity": buffer_capacity,
+            "stock_deploy": tech_stock_deploy,
+            "stock_initial": tech_stock_exist,
+        })
+        con.execute(build_create_table_sql(
+            "technologies", technologies_df, pk="id",
+            fks=[("activity", "activities", "Name"), ("hourly_profile", "hourly_profile_types", "name")]
+        ))
+        con.execute("INSERT INTO technologies SELECT * FROM technologies_df")
+
+        # Sparse: only technologies for which a flexible-activity coupling is defined (see CHECK note above)
+        flexibility_activity_full = pd.read_excel(
+            file_name, sheet_name='Technologies', usecols="BD", skiprows=5, nrows=nTb
+        ).squeeze()
+        flex_rows = [
+            {"tech_id": tech_balancers[i], "activity_name": flexibility_activity_full.iloc[i]}
+            for i in range(nTb) if pd.notna(flexibility_activity_full.iloc[i])
+        ]
+        technology_flexibility_activities_df = pd.DataFrame(flex_rows, columns=["tech_id", "activity_name"])
+        con.execute(build_create_table_sql(
+            "technology_flexibility_activities", technology_flexibility_activities_df, pk="tech_id",
+            fks=[("tech_id", "technologies", "id"), ("activity_name", "activities", "Name")]
+        ))
+        con.execute("INSERT INTO technology_flexibility_activities SELECT * FROM technology_flexibility_activities_df")
+
+        tech_costs_idx = pd.MultiIndex.from_product([tech_balancers, periods], names=["tech_id", "period"])
+        technology_costs_df = pd.DataFrame({
+            "investment": inv_cost.reshape(-1),
+            "fom": fom_cost.reshape(-1),
+            "vom": vom_cost.reshape(-1),
+        }, index=tech_costs_idx).reset_index()
+        con.execute(build_create_table_sql(
+            "technology_costs", technology_costs_df, pk=["tech_id", "period"],
+            fks=[("tech_id", "technologies", "id"), ("period", "periods", "period")]
+        ))
+        con.execute("INSERT INTO technology_costs SELECT * FROM technology_costs_df")
+
+        tech_stocks_idx = pd.MultiIndex.from_product([tech_balancers, periods], names=["tech_id", "period"])
+        technology_stocks_df = pd.DataFrame({
+            "dec_planned": tech_stock_dec.reshape(-1),
+            "min": tech_stock_min.reshape(-1),
+            "max": tech_stock_max.reshape(-1),
+        }, index=tech_stocks_idx).reset_index()
+        con.execute(build_create_table_sql(
+            "technology_stocks", technology_stocks_df, pk=["tech_id", "period"],
+            fks=[("tech_id", "technologies", "id"), ("period", "periods", "period")]
+        ))
+        con.execute("INSERT INTO technology_stocks SELECT * FROM technology_stocks_df")
+    except Exception as e:
+        print(f"error in saving technologies to duckdb: {e}")
+
     # === Infrastructure sheet ===
     print('--Reading infrastructure sheet')
     tech_infra = pd.read_excel(file_name, sheet_name='Infrastructure', usecols="A", skiprows=4, nrows=15).dropna().squeeze().tolist()
@@ -492,12 +650,56 @@ def mod0_read_data_save_duck(file_name):
         }
     }
 
+    print('--Saving infrastructure to duckdb')
+    try:
+        infrastructure_df = pd.DataFrame({
+            "id": tech_infra,
+            "category": tech_categories_infra,
+            "name": tech_names_infra,
+            "unit": tech_units_infra,
+            "activity": activity_per_tech_infra,
+            "cap2act": cap2act_infra,
+            "lifetime": ec_lifetime_infra,
+            "stock_initial": tech_stock_exist_infra,
+        })
+        con.execute(build_create_table_sql(
+            "infrastructure", infrastructure_df, pk="id",
+            fks=[("activity", "activities", "Name")]
+        ))
+        con.execute("INSERT INTO infrastructure SELECT * FROM infrastructure_df")
+
+        infra_costs_idx = pd.MultiIndex.from_product([tech_infra, periods], names=["infra_id", "period"])
+        infrastructure_costs_df = pd.DataFrame({
+            "investment": inv_cost_infra.reshape(-1),
+            "fom": fom_cost_infra.reshape(-1),
+        }, index=infra_costs_idx).reset_index()
+        con.execute(build_create_table_sql(
+            "infrastructure_costs", infrastructure_costs_df, pk=["infra_id", "period"],
+            fks=[("infra_id", "infrastructure", "id"), ("period", "periods", "period")]
+        ))
+        con.execute("INSERT INTO infrastructure_costs SELECT * FROM infrastructure_costs_df")
+    except Exception as e:
+        print(f"error in saving infrastructure to duckdb: {e}")
+
     # === Energy balance sheet ===
     print('--Reading energy balance sheet')
     activity_balances = pd.read_excel(file_name, sheet_name='EnergyBalance', usecols="O:ET", skiprows=5, nrows=550).fillna(0).to_numpy() # MODIFIED & CHECK: Range changed from O:FF to O:ET. The remaining columns are empty. Double-check which columns are included in energy balances.
 
     # Store in dictionary
     technologies['balancers']['activity_balances'] = activity_balances
+
+    print('--Saving energy balance to duckdb')
+    try:
+        energy_balance_df = matrix_to_long_df(
+            tech_balancers, "tech_id", activity_balances, activities_df["Name"].tolist(), "activity_name", "value"
+        )
+        con.execute(build_create_table_sql(
+            "energy_balance", energy_balance_df, pk=["tech_id", "activity_name"],
+            fks=[("tech_id", "technologies", "id"), ("activity_name", "activities", "Name")]
+        ))
+        con.execute("INSERT INTO energy_balance SELECT * FROM energy_balance_df")
+    except Exception as e:
+        print(f"error in saving energy balance to duckdb: {e}")
 
     # === Retrofitting sheet ===
     print('--Reading retrofitting sheet')
@@ -516,6 +718,27 @@ def mod0_read_data_save_duck(file_name):
         'from': retrofits_from,
         'costs': retrofits_costs
     }
+
+    print('--Saving retrofittings to duckdb')
+    try:
+        retrofittings_df = pd.DataFrame({
+            "from_tech": retrofits_from,
+            "to_tech": retrofits_to,
+            "cost": retrofits_costs,
+        })
+        valid_tech_ids = set(tech_balancers)
+        valid_mask = retrofittings_df["from_tech"].isin(valid_tech_ids) & retrofittings_df["to_tech"].isin(valid_tech_ids)
+        if (~valid_mask).any():
+            print(f"warning: skipping {int((~valid_mask).sum())} retrofitting row(s) referencing tech ids not present in the Technologies sheet: "
+                  f"{retrofittings_df.loc[~valid_mask, ['from_tech', 'to_tech']].to_dict('records')}")
+        retrofittings_df = retrofittings_df[valid_mask]
+        con.execute(build_create_table_sql(
+            "retrofittings", retrofittings_df, pk=["from_tech", "to_tech"],
+            fks=[("from_tech", "technologies", "id"), ("to_tech", "technologies", "id")]
+        ))
+        con.execute("INSERT INTO retrofittings SELECT * FROM retrofittings_df")
+    except Exception as e:
+        print(f"error in saving retrofittings to duckdb: {e}")
 
 
 
@@ -544,6 +767,24 @@ def mod0_read_data_save_duck(file_name):
             'values': subsidy_data[:, 2:9].astype(float)
         }
     }
+
+    print('--Saving policies to duckdb')
+    try:
+        for table_name, data in [
+            ("policy_taxes", taxes_data),
+            ("policy_feedins", feedin_data),
+            ("policy_subsidies", subsidy_data),
+        ]:
+            policy_df = build_policy_long_df(data, periods)
+            con.execute(build_create_table_sql(
+                table_name, policy_df, pk=["activity_name", "period"],
+                fks=[("activity_name", "activities", "Name"), ("period", "periods", "period")]
+            ))
+            con.execute(f"INSERT INTO {table_name} SELECT * FROM policy_df")
+    except Exception as e:
+        print(f"error in saving policies to duckdb: {e}")
+
+    con.close()
 
     # === Save data to a file ===
 
