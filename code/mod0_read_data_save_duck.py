@@ -4,7 +4,6 @@ from typing import *
 import os
 import pandas as pd
 import numpy as np
-import pickle
 import duckdb
 from Constants import Parameters
 import re
@@ -79,9 +78,12 @@ def build_policy_long_df(policy_matrix, periods):
     return long_df[["activity_name", "unit", "period", "value", "seq"]]
 
 def mod0_read_data_save_duck(file_name):
+    """Read the Excel input file and (re)populate simmodel.duckdb.
 
-    # Create empty dictionaries to store data that is derived from excel sheets
-    parameters, types, activities, profiles, technologies, agents, policies = {}, {}, {}, {}, {}, {}, {}
+    This is a pure side-effecting loader now: the database is the only
+    output. Callers that need the data in memory should query it back
+    with mod0_load_duckdb.load_from_duckdb().
+    """
 
     db_path = "SIMmodel.duckdb"
     if os.path.exists(db_path):
@@ -115,24 +117,6 @@ def mod0_read_data_save_duck(file_name):
     min_spread_value = parameters_input.loc[parameters_input["Name"] == Parameters.Parameters.min_spread_value, "Value"].values[0]
     min_spread_factor = Parameters.Parameters.min_spread_factor
     min_spread = min_spread_value / min_spread_factor
-
-    # === Parameters (in-memory dict, matches mod0_read_data.py's structure) ===
-    parameters['powinv'] = {
-        'SPBT_benchmark': powinv_SPBT_benchmark,
-        'SPBT_min': powinv_SPBT_min,
-        'CR_threshold': powinv_CR_threshold,
-        'CR_min': powinv_CR_min,
-        'NUF_threshold': powinv_NUF_threshold,
-        'NUF_min': powinv_NUF_min,
-    }
-    parameters['scarcity'] = {
-        'penalization': scarcity_penalization,
-        'gas_premium': gas_premium
-    }
-    parameters['voll'] = voll
-    parameters['min_spread'] = min_spread
-    parameters['gov_dr'] = gov_dr
-    parameters['exports_value'] = exports_value
 
     parameters_powinv = pd.DataFrame(columns=["Name", "Value"])
     # Store parameters in
@@ -185,16 +169,9 @@ def mod0_read_data_save_duck(file_name):
     energy_labels = pd.read_excel(file_name, sheet_name='Types', usecols=[types_header.get_loc(Types.energy_labels)], skiprows=2, nrows=17, dtype=str, keep_default_na=False).squeeze().tolist()
     energy_price_init = pd.read_excel(file_name, sheet_name='Types', usecols=[types_header.get_loc(Types.energy_price_init)], skiprows=2, nrows=27).dropna().squeeze().to_numpy()
 
-    # Store in dictionary
-    types['activities'] = activity_type
-    types['sectors'] = sectors
-    types['energy'] = {
-        'labels' : energy_labels,
-        'price init' : energy_price_init,
-    }
     df_activities = pd.DataFrame({"activity_type": activity_type, "seq": range(len(activity_type))})
     df_sectors = pd.DataFrame({"sectors": sectors, "seq": range(len(sectors))})
-    df_energy = dict_to_df_padded_nan(types['energy'])
+    df_energy = dict_to_df_padded_nan({'labels': energy_labels, 'price init': energy_price_init})
     df_energy["seq"] = range(len(df_energy))
     try:
         con.execute("CREATE TABLE activity_types AS SELECT * FROM df_activities")
@@ -297,26 +274,6 @@ def mod0_read_data_save_duck(file_name):
     except:
         print("error in saving criteria_weights_df to duckdb")
 
-    # Reuse the already name-based parse above instead of re-reading the sheet by column letter
-    agent_types = agent_type_names
-    multiCriteria_categories = wp["Name"].tolist()
-    agents_dr = agent_profiles_toTable["rates"].to_numpy()
-    agents_populations = agent_profiles[agent_type_names].fillna(0).to_numpy() / 100
-    weights_multiCriteria = weight_profiles[agent_type_names].fillna(0).to_numpy()
-    agent_profiles = agent_profiles_toTable["Name"].tolist()
-
-    # Store in dictionary
-    agents = {
-        'types': agent_types,
-        'profiles': agent_profiles,
-        'criteria': {
-            'categories': multiCriteria_categories,
-            'weights': weights_multiCriteria
-        },
-        'populations': agents_populations,
-        'rates': agents_dr
-    }
-
     # === Activities sheet ===
     print('--Reading activities sheet')
     activities_df = pd.read_excel(
@@ -338,7 +295,6 @@ def mod0_read_data_save_duck(file_name):
 
     print(selected_cols)
     print(periods)
-    volume_cols = [rename_volumes_col(col) for col in selected_cols]
     activities_df.columns = [rename_volumes_col(col) for col in activities_df.columns]
 
     activities_df = activities_df.rename(columns={Activities.activities_names: "Name"})
@@ -374,25 +330,6 @@ def mod0_read_data_save_duck(file_name):
     except Exception as e:
         print(f"error in saving periods to duckdb: {e}")
 
-    # === Activities (in-memory dict, matches mod0_read_data.py's structure) ===
-    activity_volumes = activities_df[volume_cols].fillna(0).to_numpy()
-    activities = {
-        'names': activities_df["Name"].tolist(),
-        'periods': np.array(periods),
-        'volumes': activity_volumes,
-        'resolution': activities_df["activity_resolution"].tolist(),
-        'types': activities_df["activity_type"].tolist(),
-        'labels': activities_df["energy_label"].tolist(),
-        'agents': activities_df["agent_profile"].tolist(),
-        'drivers': {},
-        'energies': {},
-        'emissions': {},
-        'electricity': {},
-        'gaseous': {},
-        'infra': {},
-        'prices': {},
-    }
-
     # === Hourly profiles sheet ===
     print('--Reading hourly profiles sheet')
     hourly_header = pd.read_excel(file_name, sheet_name='HourlyProfiles', header=2, nrows=0).columns.tolist()
@@ -404,10 +341,6 @@ def mod0_read_data_save_duck(file_name):
         file_name, sheet_name='HourlyProfiles', header=None, skiprows=4, nrows=8760,
         usecols=range(hourly_profile_start, len(hourly_header))
     ).to_numpy()
-
-    # Store in dictionary
-    profiles['types'] = profile_types
-    profiles['shapes'] = hourly_profiles
 
     print('--Saving hourly profiles to duckdb')
     try:
@@ -453,10 +386,6 @@ def mod0_read_data_save_duck(file_name):
     price_profiles = np.zeros((8760, nIC, len(periods)))
     for i in range(nIC):
         price_profiles[:, i, :] = price_profiles_raw[:, len(periods) * i:len(periods) * (i + 1)]
-
-    # Store in dictionary
-    profiles['interconnectors'] = interconnector
-    profiles['prices'] = price_profiles
 
     print('--Saving price profiles to duckdb')
     try:
@@ -553,70 +482,6 @@ def mod0_read_data_save_duck(file_name):
     tech_stock_dec[:, 1:] = raw_data
     tech_stock_min = read_tech(min_cols).fillna(0).to_numpy()
     tech_stock_max = read_tech(max_cols).fillna(0).to_numpy()
-
-    # Store in dictionary
-    technologies['balancers'] = {
-        'ids': tech_balancers,
-        'names': tech_names,
-        'sectors': tech_sector,
-        'subsectors': tech_subsector,
-        'units': tech_units,
-        'activities': activity_per_tech,
-        'categories': tech_categories,
-        'costs': {
-            'investments': inv_cost,
-            'foms': fom_cost,
-            'voms': vom_cost,
-            'lifetimes': ec_lifetime
-        },
-        'cap2acts': cap2act,
-        'dispatch': dispatch_type_tech,
-        'profiles': hourly_profile_tech,
-        'agents': {
-            'social_perception': social_perception_tech,
-            'complexity': perceived_complexity_tech
-        },
-        'policies': {
-            'subsidy_subject': subsidy_subject,
-            'feedin_subject': feedin_subject
-        },
-        'shedding': {
-            'capacity': shedding_capacity,
-            'limits': shedding_limits,
-            'guarantee': shedding_guarantee
-        },
-        'flexibility': {
-            'form': flexibility_form,
-            'activity': flexibility_activity,
-            'capacity': flexibility_capacity,
-            'volume': flexibility_volume,
-            'range': flexibility_range,
-            'losses': flexibility_losses,
-            'nonnegotiable': flexibility_nonnegotiable
-        },
-        'buffers': {
-            'up': buffer_up,
-            'down': buffer_down,
-            'capacity': buffer_capacity
-        },
-        'stocks': {
-            'deploy': tech_stock_deploy,
-            'initial': tech_stock_exist,
-            'dec_planned': tech_stock_dec,
-            'min': tech_stock_min,
-            'max': tech_stock_max
-        },
-        'drivers' : {},
-        'energies' : {},
-        'emissions' : {},
-        'use' : {},
-        'investments' : {},
-        'retrofittings' : {},
-        'decommissionings' : {},
-        'generators' : {},
-        'loops' : {},
-        'mca' : {},
-    }
 
     print('--Saving technologies to duckdb')
     try:
@@ -724,24 +589,6 @@ def mod0_read_data_save_duck(file_name):
     cap2act_infra = read_infra([infra_col(Infrastructure.cap2act)]).fillna(0).squeeze().to_numpy()
     tech_stock_exist_infra = read_infra([infra_col(Infrastructure.tech_stock_exist)]).fillna(0).squeeze().to_numpy()
 
-    # Store in dictionary
-    technologies['infra'] = {
-        'ids': tech_infra,
-        'categories': tech_categories_infra,
-        'names': tech_names_infra,
-        'units': tech_units_infra,
-        'activity': activity_per_tech_infra,
-        'costs': {
-            'investments': inv_cost_infra,
-            'foms': fom_cost_infra,
-            'lifetimes': ec_lifetime_infra
-        },
-        'cap2acts': cap2act_infra,
-        'stocks' : {
-            'initial': tech_stock_exist_infra,
-        }
-    }
-
     print('--Saving infrastructure to duckdb')
     try:
         infrastructure_df = pd.DataFrame({
@@ -790,9 +637,6 @@ def mod0_read_data_save_duck(file_name):
     energy_balance_data.columns = energy_balance_header
     activity_balances = energy_balance_data[activities_df["Name"].tolist()].fillna(0).to_numpy() # MODIFIED & CHECK: Range changed from O:FF to O:ET. The remaining columns are empty. Double-check which columns are included in energy balances.
 
-    # Store in dictionary
-    technologies['balancers']['activity_balances'] = activity_balances
-
     print('--Saving energy balance to duckdb')
     try:
         energy_balance_df = matrix_to_long_df(
@@ -818,13 +662,6 @@ def mod0_read_data_save_duck(file_name):
     retrofits_from = retrofittings_cell[:, 0].tolist()
     retrofits_to = retrofittings_cell[:, 1].tolist()
     retrofits_costs = retrofittings_cell[:, 2].tolist()
-
-    # Store in dictionary
-    technologies['retrofittings'] = {
-        'to': retrofits_to,
-        'from': retrofits_from,
-        'costs': retrofits_costs
-    }
 
     print('--Saving retrofittings to duckdb')
     try:
@@ -856,32 +693,13 @@ def mod0_read_data_save_duck(file_name):
     # This sheet stacks three blocks (Taxes/Feedins/Subsidies) vertically rather than
     # laying fields out in named columns, so it's read positionally; the marker text
     # 'Units' in POLICY_COL_UNIT is what locates each block's start.
-    POLICY_COL_ACTIVITY = 0
     POLICY_COL_UNIT = 1
-    POLICY_COL_VALUES_START = 2
-    policy_values_end = POLICY_COL_VALUES_START + len(periods)
 
     # Derive individual parameters
     units_indices = np.where(policies_data[:, POLICY_COL_UNIT] == 'Units')[0]
     taxes_data = policies_data[units_indices[0] + 1:units_indices[1], :]
     feedin_data = policies_data[units_indices[1] + 1:units_indices[2], :]
     subsidy_data = policies_data[units_indices[2] + 1:, :]
-
-    # Store in dictionary
-    policies = {
-        'taxes': {
-            'activities': taxes_data[:, POLICY_COL_ACTIVITY].tolist(),
-            'values': taxes_data[:, POLICY_COL_VALUES_START:policy_values_end].astype(float)
-        },
-        'feedins': {
-            'activities': feedin_data[:, POLICY_COL_ACTIVITY].tolist(),
-            'values': feedin_data[:, POLICY_COL_VALUES_START:policy_values_end].astype(float)
-        },
-        'subsidies': {
-            'activities': subsidy_data[:, POLICY_COL_ACTIVITY].tolist(),
-            'values': subsidy_data[:, POLICY_COL_VALUES_START:policy_values_end].astype(float)
-        }
-    }
 
     print('--Saving policies to duckdb')
     try:
@@ -900,34 +718,5 @@ def mod0_read_data_save_duck(file_name):
         print(f"error in saving policies to duckdb: {e}")
 
     con.close()
-
-    # === Save data to a file ===
-
-    # Note: The commented out part is to save to a .mat file (if we want to ensure compatibility with matlab)
-    # sio.savemat('data.mat', {
-    #     'parameters': parameters,
-    #     'types': types,
-    #     'activities': activities,
-    #     'profiles': profiles,
-    #     'technologies': technologies,
-    #     'agents': agents,
-    #     'policies': policies
-    # })
-    # print("Data successfully saved to data.mat")
-   
-    # Save the database to a .pkl file (better if code is fully implemented in python)
-    with open('data.pkl', 'wb') as file:
-        pickle.dump({
-            'parameters': parameters,
-            'types': types,
-            'activities': activities,
-            'profiles': profiles,
-            'technologies': technologies,
-            'agents': agents,
-            'policies': policies
-        }, file)
-
-    print("Data successfully saved to data.pkl")
-
-    return parameters, types, activities, profiles, technologies, agents, policies
+    print(f"Data successfully saved to {db_path}")
 
