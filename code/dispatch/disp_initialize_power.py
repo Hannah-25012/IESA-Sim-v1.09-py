@@ -86,16 +86,21 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     activity_balance_gen = activity_balances[tech_generators_coord, :]
     generators_activity = tech_stock[tech_generators_coord] * cap2act[tech_generators_coord]
 
+    # Identify the electricity activity and hourly availability profile per
+    # generator, all at once instead of a per-generator Python loop.
+    gen_elec_idx = np.array([gen.activity.elec_idx for gen in generator_techs])
+    gen_act_idx = np.array([gen.activity.idx for gen in generator_techs])
+    gen_per_elec[np.arange(nG), gen_elec_idx] = True
+    activity_balance_gen[np.arange(nG), gen_act_idx] = 0
+
+    gen_profile_matrix = np.column_stack([profile_shape_by_type[gen.profile] for gen in generator_techs])  # (nH, nG)
+    gen_availability_hourly[:, :] = gen_profile_matrix * generators_activity[None, :]
+
+    # Get the hourly variable costs of the generators. This branch is dead in
+    # the current data (see NOTE below) but kept as its own small per-generator
+    # loop rather than vectorized away, since vectorizing dead code risks
+    # hiding it entirely instead of leaving it visibly fixable.
     for iG, gen in enumerate(generator_techs):
-
-        # Identify the electricity activity per generator
-        gen_per_elec[iG, gen.activity.elec_idx] = True
-        activity_balance_gen[iG, gen.activity.idx] = 0
-
-        # Get the hourly availability profiles of the generators
-        gen_availability_hourly[:, iG] = profile_shape_by_type[gen.profile] * generators_activity[iG]
-
-        # Get the hourly variable costs of the generators
         if generators_subsector[iG] == 'Inland generation':  # Interconnectors
             elec_generated = gen.activity.name
             # NOTE: `interconnector` is a plain list, so this comparison never
@@ -105,8 +110,8 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
                 coord_IC = (interconnector == elec_generated)
                 gen_xc_costs_hourly[:, iG] = price_profiles[:, coord_IC]
 
-        # Obtain the hourly activity balances
-        gen_balance_hourly[:, :, iG] = np.ones((nH, 1)) * activity_balance_gen[iG, :]
+    # Obtain the hourly activity balances for every generator at once
+    gen_balance_hourly[:, :, :] = np.broadcast_to(activity_balance_gen.T, (nH, nA, nG))
 
     gen_per_elec = gen_per_elec.astype(bool)
 
