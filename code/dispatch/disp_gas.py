@@ -162,14 +162,9 @@ def disp_gas(dimensions, parameters, activities, technologies, profiles, policie
         hourly_balance = np.sum(tech_use_hourly * (np.ones((nH, 1)) @ activity_balances[:, coord_act].T), axis=1)
 
         if np.any(hourly_balance != 0):
-            daily_balance = np.zeros((nDy, 1)) # Preallocate
-            for iDy in range(nDy):
-
-                # Identify which hours
-                coord_hours = np.arange(iDy * nHd, (iDy + 1) * nHd) # (MATLAB: (iDy-1)*nHd + 1 : iDy*nHd)
-
-                # Define the daily balance
-                daily_balance[iDy, 0] = np.sum(hourly_balance[coord_hours])
+            # Daily balance: sum each day's nHd consecutive hours at once instead
+            # of a per-day Python loop (hourly_balance is exactly nDy*nHd long).
+            daily_balance = hourly_balance.reshape(nDy, nHd).sum(axis=1, keepdims=True)
 
             # Cummulative volumes per day
             daily_cummulative = np.cumsum(daily_balance, axis=0)
