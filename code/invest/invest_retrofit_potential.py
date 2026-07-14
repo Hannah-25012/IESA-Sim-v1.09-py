@@ -2,13 +2,10 @@
 import numpy as np
 
 def invest_retrofit_potential(dimensions, technologies, tech_stock_exist):
-    
+
     # Extract parameters
     nTb = dimensions['nTb']
-    tech_balancers = technologies['balancers']['ids']
-    retrofits_to = technologies['retrofittings']['to']
-    retrofits_from = technologies['retrofittings']['from']
-    retrofits_costs = technologies['retrofittings']['costs']
+    tech_entities = technologies.balancers.entities
 
     # Determine number of options per retrofittable technologies and potentials
     retrofit_sources = [[None] * 15 for _ in range(nTb)]
@@ -16,43 +13,30 @@ def invest_retrofit_potential(dimensions, technologies, tech_stock_exist):
     retrofit_potential = np.zeros(nTb, dtype=float)
     retrofit_cost = np.full(nTb, 1e9, dtype=float)  # High initial value for minimum tracking (Manuel says: % High enough number to then store the min) - # CHECK: According to Vinzenz, adding a very high number isn't the most elegant way, maybe it can be changed?
 
-    for iTb in range(nTb):
+    for tech in tech_entities:
 
-        # Find the retrofitting options of the technology
-        coord_to = [retrofit == tech_balancers[iTb] for retrofit in retrofits_to]
-        n_opts = sum(coord_to)
+        # tech.retrofit_sources: (source_tech, cost) pairs this technology can be retrofitted from
         n_froms = 0
+        for source_tech, cost in tech.retrofit_sources:
 
-        # If there are any options, proceed
-        if n_opts > 0:
+            # Check if there is available stock
+            av_stock = tech_stock_exist[source_tech.idx]
+            if av_stock > 0:
 
-            # Identify the available stock per retrofit alternative
-            options_name = [retrofits_from[idx] for idx, val in enumerate(coord_to) if val]
-            options_costs = [retrofits_costs[idx] for idx, val in enumerate(coord_to) if val]
+                # Confirm the option
+                n_froms += 1
 
-            for i_opts in range(n_opts):
+                # Increase the potential
+                retrofit_potential[tech.idx] += av_stock
 
-                # Identify the original technology
-                coord_from = [tech == options_name[i_opts] for tech in tech_balancers]
+                # Store the minimal cost
+                retrofit_cost[tech.idx] = min(retrofit_cost[tech.idx], cost)
 
-                # Check if there is available stock
-                av_stock = tech_stock_exist[coord_from].sum()
-                if av_stock > 0:
-                    
-                    # Confirm the option
-                    n_froms += 1
+                # Store the retrofit source
+                retrofit_sources[tech.idx][n_froms - 1] = source_tech
 
-                    # Increase the potential
-                    retrofit_potential[iTb] += av_stock
-
-                    # Store the minimal cost
-                    retrofit_cost[iTb] = min(retrofit_cost[iTb], options_costs[i_opts])
-
-                    # Store the name of the retrofit source
-                    retrofit_sources[iTb][n_froms - 1] = options_name[i_opts]
-
-            # Save the number of retrofit options
-            retrofit_options[iTb] = n_froms
+        # Save the number of retrofit options
+        retrofit_options[tech.idx] = n_froms
 
     # Shrink the retrofit sources list
     n_opts_max = max(retrofit_options)

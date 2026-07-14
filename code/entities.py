@@ -117,6 +117,7 @@ class Technology:
 
         self.activity_balances = activity_balances_row  # view: 1D over ALL activities
         self.retrofit_options = []  # Technology objects this can retrofit into
+        self.retrofit_sources = []  # (Technology, cost) pairs this can retrofit FROM
 
     @property
     def is_buffer(self):
@@ -240,10 +241,13 @@ def link_entities(activities, technologies):
         if infra_obj.activity is not None:
             infra_obj.activity.infrastructure.append(infra_obj)
 
-    for from_id, to_id in zip(technologies.retrofittings["from"], technologies.retrofittings["to"]):
+    for from_id, to_id, cost in zip(
+        technologies.retrofittings["from"], technologies.retrofittings["to"], technologies.retrofittings["costs"]
+    ):
         from_tech = by_id.get(from_id)
         to_tech = by_id.get(to_id)
         if from_tech is not None and to_tech is not None:
             from_tech.retrofit_options.append(to_tech)
+            to_tech.retrofit_sources.append((from_tech, cost))
 
     return activity_list, tech_list, infra_list

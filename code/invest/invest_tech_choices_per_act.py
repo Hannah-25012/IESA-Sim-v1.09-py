@@ -4,56 +4,52 @@ import numpy as np
 def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP):
 
     # Extract parameters
-    nA = dimensions['nA']
     nTb = dimensions['nTb']
     nAT = dimensions['nAT']
-    activities_names = activities['names']
-    activity_agent = activities['agents']
-    activity_per_tech = technologies['balancers']['activities']
-    dispatch_type_tech = technologies['balancers']['dispatch']
-    tech_LCOPs = technologies['balancers']['lcops']['values'][:, iP]
-    multi_criteria_performance_tech = technologies['balancers']['mca']['matrix'][:, :, iP]
-    tech_choices_agent = technologies['balancers']['choices_agent'][:, :, iP]
-    agent_profiles = agents['profiles']
-    weights_multicriteria = agents['criteria']['weights']
-    agents_populations = agents['populations']
-    tech_choices_LCOP_order = technologies['balancers']['choices_lcop_order']
+    tech_entities = technologies.balancers.entities
+    tech_LCOPs = technologies.balancers.lcops.values[:, iP]
+    multi_criteria_performance_tech = technologies.balancers.mca.matrix[:, :, iP]
+    tech_choices_agent = technologies.balancers.choices_agent[:, :, iP]
+    agent_profiles = agents.profiles
+    weights_multicriteria = agents.criteria.weights
+    agents_populations = agents.populations
+
+    # Agent-profile name -> row lookup, resolved once instead of re-scanning
+    # agent_profiles for every activity.
+    agent_idx_by_name = {name: i for i, name in enumerate(agent_profiles)}
 
     # Add a large cost to buffer technologies (to make them unattractive and thereby not chosen)
-    coord_buffer = np.array([dt == 'Gas buffer' for dt in dispatch_type_tech])
+    coord_buffer = np.array([tech.is_buffer for tech in tech_entities])
     tech_LCOPs[coord_buffer] += 1e6
 
     # Identify choice per activity and agent type
     tech_choices_LCOP_order = np.zeros(nTb, dtype=int)
-    for iA in range(nA):
-        
+    for activity in activities.entities:
+
         # Identify technologies that satisfy the activity
-        coord_tech_act = np.array([activities_names[iA] == act for act in activity_per_tech])
-        idxs = np.nonzero(coord_tech_act)[0]
+        idxs = np.array([t.idx for t in activity.technologies], dtype=int)
         nTa = idxs.size
 
         # Order technologies by LCOP
-        tech_LCOPs_options = tech_LCOPs[coord_tech_act]
+        tech_LCOPs_options = tech_LCOPs[idxs]
         order_LCOP = np.argsort(tech_LCOPs_options, kind='mergesort')
         order_in_line = np.zeros(nTa, dtype=int)
         for iTa in range(nTa):
             order_in_line[order_LCOP[iTa]] = iTa + 1
-            
+
         tech_choices_LCOP_order[idxs] = order_in_line
 
-        # Identify non-buffer technologies
-        coord_tech_opr = ~coord_buffer
+        # Identify non-buffer technologies for this activity
+        competitors = [t for t in activity.technologies if not t.is_buffer]
+        coord_tech = np.array([t.idx for t in competitors], dtype=int)
+        nT = len(competitors)
 
-        # Identify population vector of agent types based on agent profiles
-        coord_agentprofile = np.array([activity_agent[iA] == ap for ap in agent_profiles])
-        population_vector = agents_populations[coord_agentprofile, :].flatten()
-
-        # Check that the activity has main technologies
-        coord_tech = coord_tech_act & coord_tech_opr
-        nT = np.sum(coord_tech)
+        # Identify population vector of agent types based on the activity's agent profile
+        agent_idx = agent_idx_by_name.get(activity.agent_profile_name)
+        population_vector = agents_populations[agent_idx, :]
 
         if nT == 0:
-            print(f"--****There is no main technology for activity: {activities_names[iA]}")
+            print(f"--****There is no main technology for activity: {activity.name}")
 
         elif nT == 1:
             tech_choices_agent[coord_tech, :] = population_vector
@@ -110,7 +106,7 @@ def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP
     tech_choices = np.sum(tech_choices_agent, axis=1)
 
     # Save variables
-    technologies['balancers']['choices_agent'][:, :, iP] = tech_choices_agent
-    technologies['balancers']['choices_lcop_order'][:, iP] = tech_choices_LCOP_order
+    technologies.balancers.choices_agent[:, :, iP] = tech_choices_agent
+    technologies.balancers.choices_lcop_order[:, iP] = tech_choices_LCOP_order
 
     return technologies, tech_choices

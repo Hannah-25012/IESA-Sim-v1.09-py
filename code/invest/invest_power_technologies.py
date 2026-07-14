@@ -6,42 +6,42 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
     # Extract Parameters
     nTb = dimensions['nTb']
     nAT = dimensions['nAT']
-    powinv_SPBT_benchmark = parameters['powinv']['SPBT_benchmark']
-    powinv_SPBT_min = parameters['powinv']['SPBT_min']
-    powinv_CR_threshold = parameters['powinv']['CR_threshold']
-    powinv_CR_min = parameters['powinv']['CR_min']
-    powinv_NUF_threshold = parameters['powinv']['NUF_threshold']
-    powinv_NUF_min = parameters['powinv']['NUF_min']
-    activities_names = activities['names']
-    activity_label = activities['labels']
-    activity_agent = activities['agents']
-    activity_per_tech = technologies['balancers']['activities']
-    inv_cost = technologies['balancers']['costs']['investments'][:, iP]
-    flexibility_form = technologies['balancers']['flexibility']['form']
-    tech_stock_deploy = technologies['balancers']['stocks']['deploy']
-    tech_stock = technologies['balancers']['stocks']['evolution'][:, iP]
-    tech_stock_min = technologies['balancers']['stocks']['min'][:, iP]
-    tech_stock_max = technologies['balancers']['stocks']['max'][:, iP]
-    generator_capt_rate = technologies['balancers']['generators']['CR'][:, iP-1]
-    generator_norm_ut_fact = technologies['balancers']['generators']['NUF'][:, iP-1]
-    generator_cash_flow = technologies['balancers']['generators']['CF'][:, iP-1]
-    multi_criteria_performance_tech = technologies['balancers']['mca']['matrix'][:, :, iP]
-    agent_profiles = agents['profiles']
-    multi_criteria_categories = agents['criteria']['categories']
-    weights_multi_criteria = agents['criteria']['weights']
-    agents_populations = agents['populations']
+    powinv_SPBT_benchmark = parameters.powinv.SPBT_benchmark
+    powinv_SPBT_min = parameters.powinv.SPBT_min
+    powinv_CR_threshold = parameters.powinv.CR_threshold
+    powinv_CR_min = parameters.powinv.CR_min
+    powinv_NUF_threshold = parameters.powinv.NUF_threshold
+    powinv_NUF_min = parameters.powinv.NUF_min
+    tech_entities = technologies.balancers.entities
+    inv_cost = technologies.balancers.costs.investments[:, iP]
+    tech_stock_deploy = technologies.balancers.stocks.deploy
+    tech_stock = technologies.balancers.stocks.evolution[:, iP]
+    tech_stock_min = technologies.balancers.stocks.min[:, iP]
+    tech_stock_max = technologies.balancers.stocks.max[:, iP]
+    generator_capt_rate = technologies.balancers.generators.CR[:, iP-1]
+    generator_norm_ut_fact = technologies.balancers.generators.NUF[:, iP-1]
+    generator_cash_flow = technologies.balancers.generators.CF[:, iP-1]
+    multi_criteria_performance_tech = technologies.balancers.mca.matrix[:, :, iP]
+    agent_profiles = agents.profiles
+    multi_criteria_categories = agents.criteria.categories
+    weights_multi_criteria = agents.criteria.weights
+    agents_populations = agents.populations
+
+    # Agent-profile name -> row lookup, resolved once instead of re-scanning
+    # agent_profiles for every technology.
+    agent_idx_by_name = {name: i for i, name in enumerate(agent_profiles)}
 
     # Identify the choice per activity and agent type
     iMC3 = np.where(np.array(multi_criteria_categories) == 'Cost performance')[0][0]
 
     # Loop through all technologies
     new_investments = np.zeros((nTb,1)) # Preallocate new investments
-    for iTb in range(nTb):
+    for tech in tech_entities:
+        iTb = tech.idx
+        own_act = tech.activity
 
         # Identify if the main activity of the technology is electricity generation
-        act_coord = np.array(activities_names) == activity_per_tech[iTb]
-
-        if np.sum(np.array(activity_label)[act_coord] == 'Electricity') == 1 and inv_cost[iTb] > 0:
+        if own_act is not None and own_act.is_electricity and inv_cost[iTb] > 0:
 
             # Activate the volumes accordingly with the quality of their capture rates and capacity factors. If capacity factors are above a threshold and
             # capture rates satisfy a minimum then activate. If capture rates are above a threshold and capacity factors satisfy a minimum then activate.
@@ -49,7 +49,7 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
             condition_2 = generator_norm_ut_fact[iTb] >= powinv_NUF_threshold and generator_capt_rate[iTb] >= powinv_CR_min
 
             # Batteries are always eligible if cost-effective
-            if flexibility_form[iTb] == 'Storage':
+            if tech.flexibility_form == 'Storage':
                 condition_1 = True
 
             # Execute the condition
@@ -75,10 +75,10 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
 
                     # B) We use the multiCriteria_performance matrix to obtain an indicator from 0 to 1 for each technology and actor, we then multiply
                     # by the range and its population fraction
-                    
-                    # Identify population vector of agent type based on agent profile 
-                    coord_agent_profile = np.array(activity_agent)[act_coord] == np.array(agent_profiles)
-                    population_vector = agents_populations[coord_agent_profile, :].flatten()
+
+                    # Identify population vector of agent type based on agent profile
+                    agent_idx = agent_idx_by_name[own_act.agent_profile_name]
+                    population_vector = agents_populations[agent_idx, :]
                     population_vector = population_vector / np.sum(population_vector)
 
                     # Quantify the interest per agent and add to the investment counter

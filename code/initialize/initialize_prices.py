@@ -5,7 +5,7 @@ def initialize_prices(activities, tech_categories, activity_label, activity_per_
                       activities_energy, activities_emission, taxes_activities,
                       taxes_values, vom_cost):
 
-    activity_names = activities['names']
+    activity_names = activities.names
     nA = len(activity_names)
 
     initialized_prices = np.zeros((nA, vom_cost.shape[1])) # Preallocate

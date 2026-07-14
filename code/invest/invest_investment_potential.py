@@ -3,26 +3,25 @@
 import numpy as np
 
 def invest_investment_potential(dimensions, technologies, tech_stock_exist, retrofit_potential, ip):
-    
+
     # Extract parameters
     nTb = dimensions['nTb']
-    tech_stock_deploy = technologies['balancers']['stocks']['deploy']
-    tech_stock_max = technologies['balancers']['stocks']['max'][:, ip]
+    tech_entities = technologies.balancers.entities
+    tech_stock_max = technologies.balancers.stocks.max[:, ip]
 
     # Obtain investment potentials
     investment_potential = np.zeros(nTb)  # Preallocate
-    for iTb in range(nTb):
-        
+    for tech in tech_entities:
+
         # Obtain the raw room to invest
-        room_to_invest = tech_stock_max[iTb] - tech_stock_exist[iTb]
+        room_to_invest = tech_stock_max[tech.idx] - tech_stock_exist[tech.idx]
 
         # Check if there is a deploy limitation or a retrofit option
-        if tech_stock_deploy[iTb] > 0:
-            investment_potential[iTb] = min(tech_stock_deploy[iTb], room_to_invest)
-        elif retrofit_potential[iTb] > 0:
-            investment_potential[iTb] = retrofit_potential[iTb]
+        if tech.stock_deploy > 0:
+            investment_potential[tech.idx] = min(tech.stock_deploy, room_to_invest)
+        elif retrofit_potential[tech.idx] > 0:
+            investment_potential[tech.idx] = retrofit_potential[tech.idx]
         else:
-            investment_potential[iTb] = room_to_invest
+            investment_potential[tech.idx] = room_to_invest
 
     return investment_potential
-

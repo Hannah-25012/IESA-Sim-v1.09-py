@@ -2,31 +2,20 @@
 import numpy as np
 
 def invest_ccus_sufficiency(dimensions, activities, technologies, techstock_exist, report_gap, iP):
-    
+
     # Extract Parameters
     nA = dimensions['nA']
-    nAc = dimensions['nAc']
-    nTb = dimensions['nTb']
-    activities_names = activities['names']
-    activity_label = activities['labels']
-    activities_emission = activities['emissions']['names']
-    activities_netvolumes = activities['volumes'][:, iP]
-    activity_per_tech = technologies['balancers']['activities']
-    cap2act = technologies['balancers']['cap2acts']
-    activity_balances = technologies['balancers']['activity_balances']
+    activities_netvolumes = activities.volumes[:, iP]
+    tech_entities = technologies.balancers.entities
+    activity_balances = technologies.balancers.activity_balances
 
     # Calculate the activity balance of existing stock without electricity generation
     techstock_test = techstock_exist.copy()
+    for tech in tech_entities:
+        if tech.activity is not None and tech.activity.is_electricity:
+            techstock_test[tech.idx] = 0
 
-    for iTb in range(nTb):
-        coord_act = np.array([act == activity_per_tech[iTb] for act in activities_names])
-        activity_label = np.array(activity_label)
-        matched_labels = activity_label[coord_act]
-
-        if matched_labels.size > 0 and matched_labels[0] == 'Electricity':
-            techstock_test[iTb] = 0
-
-    cap2act = cap2act.reshape(-1, 1)
+    cap2act = technologies.balancers.cap2acts.reshape(-1, 1)
 
     # Each outcome is rounded to exactly the same number of decimals (same is implemented in matlab)
     precision = 14 # define rounding precision
@@ -48,15 +37,11 @@ def invest_ccus_sufficiency(dimensions, activities, technologies, techstock_exis
     if report_gap:
         print(f"{'Activity':>60s},{'Gap':>6s}")
 
-    for iAc in range(nAc):
-        coord_act = np.array([act == activities_emission[iAc] for act in activities_names])
-        ccus_gap[coord_act] = activity_gap[coord_act]
+    for activity in activities.entities:
+        if activity.is_emission:
+            ccus_gap[activity.idx] = activity_gap[activity.idx]
 
-        if report_gap:
-            indices = np.where(coord_act)[0]
-            if indices.size != 1:
-                raise ValueError(f"Unexpected number of matches ({indices.size}) for activities_emission[{iAc}].")      
-            index = indices[0]
-            print(f"{activities_names[index]:>60s}, {ccus_gap[index][0]:6.2f}")
-    
+            if report_gap:
+                print(f"{activity.name:>60s}, {ccus_gap[activity.idx][0]:6.2f}")
+
     return ccus_gap
