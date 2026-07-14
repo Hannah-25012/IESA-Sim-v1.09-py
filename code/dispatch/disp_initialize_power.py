@@ -224,12 +224,10 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
         bat_vom = vom_cost[tech_batteries_coord]
         bat_stock = tech_stock[tech_batteries_coord]
 
-        # Identify the electricity activity
+        # Identify the electricity activity for every battery at once
         bat_per_elec = np.zeros((nB, nAk)) # Preallocate
-        for iB, bat in enumerate(battery_techs):
-
-            # Save the link
-            bat_per_elec[iB, bat.activity.elec_idx] = 1
+        bat_elec_idx = np.array([bat.activity.elec_idx for bat in battery_techs])
+        bat_per_elec[np.arange(nB), bat_elec_idx] = 1
 
         bat_per_elec = bat_per_elec.astype(bool)
 
@@ -251,28 +249,31 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     cap2act_interconnectors = tech_stock[tech_interconnectors_coord] # FIX: both techStock_interconnectors and cap2act_interconnectors are defined in the same way.
     # Suggested fix by copilot: cap2act_interconnectors = cap2act[tech_interconnectors_coord]
 
-    for iI, xc in enumerate(interconnector_techs):
+    if nI > 0:
+        # Identify the to/from coordinates and efficiencies for every
+        # interconnector at once instead of a per-interconnector loop.
+        iAk_to_arr = np.array([xc.activity.elec_idx for xc in interconnector_techs])
 
-        # Identify the to coordinate
-        iAk_to = xc.activity.elec_idx
+        xc_balance_matrix = np.array([xc.activity_balances for xc in interconnector_techs])  # (nI, nA)
+        from_idx_arr = np.argmax(xc_balance_matrix < 0, axis=1)  # first negative entry per interconnector
 
-        # Identify the from coordinate
-        from_idx = np.where(xc.activity_balances < 0)[0][0]
-        from_activity = activities.entities[from_idx]
-        iAk_from = from_activity.elec_idx
+        activity_elec_idx = np.array([
+            a.elec_idx if a.elec_idx is not None else -1 for a in activities.entities
+        ])
+        iAk_from_arr = activity_elec_idx[from_idx_arr]
 
-        # Save the link
-        xc_per_elec[iAk_to, iAk_from, iI] = True
+        # Save the links
+        xc_per_elec[iAk_to_arr, iAk_from_arr, np.arange(nI)] = True
 
         # Efficiency
-        xc_efficiencies[iI, 0] = -1 / xc.activity_balances[from_idx]
+        xc_efficiencies[:, 0] = -1 / xc_balance_matrix[np.arange(nI), from_idx_arr]
 
         # Get the hourly availability profiles of the XC technologies
-        ref_profile = profile_shape_by_type[xc.profile]
+        ref_profile_matrix = np.column_stack([profile_shape_by_type[xc.profile] for xc in interconnector_techs])  # (nH, nI)
 
         # Supply and demand profiles
-        xc_demand[:, iI] = ref_profile * techStock_interconnectors[iI] * cap2act_interconnectors[iI]
-        xc_supply[:, iI] = -xc_demand[:, iI] / xc_efficiencies[iI, 0]
+        xc_demand[:, :] = ref_profile_matrix * techStock_interconnectors[None, :] * cap2act_interconnectors[None, :]
+        xc_supply[:, :] = -xc_demand / xc_efficiencies[:, 0][None, :]
 
     xc_per_elec = xc_per_elec.astype(bool)
 
