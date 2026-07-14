@@ -68,13 +68,8 @@ def disp_power_loadshifting(loadshifts_efficiencies, loadshifts_capacities,
             order = np.argsort(prices_vector, kind='stable')
             order_up = np.cumsum(room_up[order])
             x = room_down[order[::-1]]   # same as flip(order) in MATLAB
-            order_down = np.zeros_like(x)
-            running_sum = 0.0
-
-            # Summation from the end to the start:
-            for i in reversed(range(len(x))):
-                running_sum += x[i]
-                order_down[i] = running_sum
+            # order_down[i] = sum(x[i:]) - a reverse (suffix) cumulative sum
+            order_down = np.cumsum(x[::-1])[::-1]
 
             iSolution = np.argmin(np.abs(order_up - order_down))
 
