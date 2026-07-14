@@ -79,8 +79,16 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
             else:
                 elec_prices_hourly[iH, iAk] = gen_cost[iG_marginal]
 
-            # Fill dispatch: set all online to full availability, then subtract excess from marginal
-            gen_use_hourly[iH, iG_online] = gen_available[iG_online]
-            gen_use_hourly[iH, iG_marginal] -= MOC_excess
+            # Fill dispatch: set all online to full availability, then subtract excess from marginal.
+            # BUGFIX: iG_online can include generators that belong to OTHER nodes - they were
+            # zeroed out above (not excluded), so with cost 0 they sort to the front of the merit
+            # order and end up "online" here even though they contribute nothing. Writing their
+            # (zero) availability into gen_use_hourly was clobbering that generator's real,
+            # already-computed dispatch from its own node's turn earlier in this same hour's loop.
+            # Restrict writes to generators that actually belong to this node.
+            iG_online_own = iG_online[mask_gens[iG_online]]
+            gen_use_hourly[iH, iG_online_own] = gen_available[iG_online_own]
+            if mask_gens[iG_marginal]:
+                gen_use_hourly[iH, iG_marginal] -= MOC_excess
 
     return gen_use_hourly, elec_prices_hourly
