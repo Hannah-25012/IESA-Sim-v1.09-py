@@ -1,6 +1,18 @@
 # Main file from which all modules are called sequentially
-import time
 import os
+import sys
+
+# The pipeline is organized by phase into subfolders (read/, initialize/, invest/,
+# dispatch/, postprocess/, write/), but every module still uses flat
+# `from module import thing` imports rather than package-qualified ones, so each
+# phase folder needs to be on sys.path directly.
+_code_dir = os.path.dirname(os.path.abspath(__file__))
+for _phase_dir in ('read', 'initialize', 'invest', 'dispatch', 'postprocess', 'write'):
+    _phase_path = os.path.join(_code_dir, _phase_dir)
+    if _phase_path not in sys.path:
+        sys.path.insert(0, _phase_path)
+
+import time
 import pickle
 from pathlib import Path
 from mod0_read_data_save_duck import mod0_read_data_save_duck
