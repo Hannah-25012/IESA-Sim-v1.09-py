@@ -31,6 +31,7 @@ class Activity:
         self.flexible_technologies = []  # Technology objects benefiting from flexibility here
         self.energy_idx = None           # position within activities.energies.names, or None
         self.elec_idx = None             # position within activities.electricity.names, or None
+        self.emission_idx = None         # position within activities.emissions.names, or None
 
     @property
     def is_driver(self):
@@ -176,9 +177,11 @@ def link_entities(activities, technologies):
 
     energy_by_name = {name: i for i, name in enumerate(activities.energies.names)}
     elec_by_name = {name: i for i, name in enumerate(activities.electricity.names)}
+    emission_by_name = {name: i for i, name in enumerate(activities.emissions.names)}
     for a in activity_list:
         a.energy_idx = energy_by_name.get(a.name)
         a.elec_idx = elec_by_name.get(a.name)
+        a.emission_idx = emission_by_name.get(a.name)
 
     balancers = technologies.balancers
     tech_list = []
