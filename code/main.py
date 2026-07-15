@@ -125,10 +125,18 @@ def main(settings):
     # figures but doesn't force them onto screen - normally they'd only get
     # flushed by the caller's final blocking plt.show() (see run_IESA_sim.py).
     # The duckDB writes below can take a long time on a full multi-period run
-    # (the hourly fact tables are large), so without this pause the process
-    # stays busy well past when the figures were ready and the windows never
-    # actually appear until saving finishes - flush them now instead.
-    plt.pause(0.001)
+    # (the hourly fact tables are large), so without a real flush here the
+    # process goes straight back to being CPU-busy and the GUI event loop
+    # never gets enough time to actually paint each window's canvas - the
+    # windows appear (empty/unpainted) but the plotted data never shows.
+    # A tiny plt.pause() isn't enough for that to complete, especially with
+    # several figures open at once, so draw everything explicitly first and
+    # then hold the event loop open for a few seconds per figure.
+    for fig_num in plt.get_fignums():
+        fig = plt.figure(fig_num)
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+    plt.pause(2)
 
     # Note: The commented-out part saves output to .mat file (if interaction with matlab is desired)
     # if save_output:
