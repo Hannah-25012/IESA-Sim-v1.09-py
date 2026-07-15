@@ -15,6 +15,7 @@ for _phase_dir in ('read', 'initialize', 'invest', 'dispatch', 'postprocess', 'w
 import time
 import pickle
 from pathlib import Path
+import matplotlib.pyplot as plt
 from mod0_read_data_save_duck import mod0_read_data_save_duck
 from mod0_load_duckdb import load_from_duckdb
 from mod1_initialize import mod1_initialize
@@ -119,6 +120,15 @@ def main(settings):
         dimensions, types, parameters, activities, technologies, agents, policies, results, output_path, plot_price_duration
     )
     print("Results generated successfully.")
+
+    # results_graph() only calls plt.show(block=False), which schedules the
+    # figures but doesn't force them onto screen - normally they'd only get
+    # flushed by the caller's final blocking plt.show() (see run_IESA_sim.py).
+    # The duckDB writes below can take a long time on a full multi-period run
+    # (the hourly fact tables are large), so without this pause the process
+    # stays busy well past when the figures were ready and the windows never
+    # actually appear until saving finishes - flush them now instead.
+    plt.pause(0.001)
 
     # Note: The commented-out part saves output to .mat file (if interaction with matlab is desired)
     # if save_output:
