@@ -5,53 +5,53 @@ def results_policy_cashflows(dimensions, parameters, types, activities, technolo
 
     # Extract parameters
     nP = dimensions['nP']
-    nA = dimensions['nA']
-    nTb = dimensions['nTb']
-    gov_dr = parameters['gov_dr']
-    policy_cashflows_categories = types['policy_cashflows_categories']
-    actitivites_names = activities['names']
-    activityper_tech = technologies['balancers']['activities']
-    activity_balances = technologies['balancers']['activity_balances']
-    tech_subsector = technologies['balancers']['subsectors']
-    inv_cost = technologies['balancers']['costs']['investments']
-    vom_cost = technologies['balancers']['costs']['voms']
-    ec_lifetime = technologies['balancers']['costs']['lifetimes']
-    subsidy_subject = technologies['balancers']['policies']['subsidy_subject']
-    feedin_subject = technologies['balancers']['policies']['feedin_subject']
-    tech_use = technologies['balancers']['use']['yearly']
-    investments = technologies['balancers']['investments']
-    taxes_activities = policies['taxes']['activities']
-    taxes_values = policies['taxes']['values']
-    feedin_activities = policies['feedins']['activities']
-    feedin_values = policies['feedins']['values']
-    subsidy_activities = policies['subsidies']['activities']
-    subsidy_values = policies['subsidies']['values']
-    policy_cashflows = results['policy_cashflows']
+    gov_dr = parameters.gov_dr
+    policy_cashflows_categories = types.policy_cashflows_categories
+    activity_entities = activities.entities
+    tech_entities = technologies.balancers.entities
+    activity_balances = technologies.balancers.activity_balances
+    inv_cost = technologies.balancers.costs.investments
+    vom_cost = technologies.balancers.costs.voms
+    tech_use = technologies.balancers.use.yearly
+    investments = technologies.balancers.investments
+    taxes_activities = policies.taxes.activities
+    taxes_values = policies.taxes.values
+    feedin_activities = policies.feedins.activities
+    feedin_values = policies.feedins.values
+    subsidy_activities = policies.subsidies.activities
+    subsidy_values = policies.subsidies.values
+    policy_cashflows = results.policy_cashflows
+
+    # Activity-name -> entity/index lookups, resolved once instead of
+    # re-scanning name lists inside the technology loops below.
+    activity_by_name = {a.name: a for a in activity_entities}
+    taxes_idx_by_name = {name: i for i, name in enumerate(taxes_activities)}
+    subsidy_idx_by_name = {name: i for i, name in enumerate(subsidy_activities)}
 
     # 1) Calculate EUAs========================================================
     # Check the EUA balance of all technologies
     iPc = np.array([cat == 'EUA' for cat in policy_cashflows_categories])
-    iAeua = np.array([act == 'CO2 Air ETS' for act in actitivites_names])
-    iTeua = np.array([subsec == 'National ETS' for subsec in tech_subsector])
-    tech_eua_balance = activity_balances[:, iAeua] # Select all rows and the column(s) corresponding to 'CO2 Air ETS'
-    tech_eua_balance[iTeua, :] = 0 # Set to zero those technologies that are of 'National ETS'
-    eua_balance = np.sum(tech_use * (tech_eua_balance @ np.ones((tech_eua_balance.shape[1], nP))), axis=0) # Replicate the balance to all periods and multiply elementwise with tech use then sum across technologies
-    
-    # Multiply by the EUA price 
-    eua_cashflow = eua_balance * vom_cost[iTeua, :]
+    eua_activity = activity_by_name['CO2 Air ETS']
+    coord_national_ets = np.array([tech.subsector == 'National ETS' for tech in tech_entities])
+    tech_eua_balance = activity_balances[:, eua_activity.idx].copy() # Select the column corresponding to 'CO2 Air ETS'
+    tech_eua_balance[coord_national_ets] = 0 # Set to zero those technologies that are of 'National ETS'
+    eua_balance = np.sum(tech_use * tech_eua_balance[:, None], axis=0) # Broadcast the balance to all periods and multiply elementwise with tech use then sum across technologies
+
+    # Multiply by the EUA price
+    eua_cashflow = eua_balance * vom_cost[coord_national_ets, :]
     policy_cashflows[iPc, :] = eua_cashflow
 
     # 2) Calculate all the taxes ==============================================
     iPc = np.array([cat == 'Taxes' for cat in policy_cashflows_categories])
     taxes_cashflow = np.zeros(nP)
-    for iA in range(nA):
+    for act in activity_entities:
 
         # Check if the activity is subject to taxes
-        if actitivites_names[iA] in taxes_activities:
-            tax_index = taxes_activities.index(actitivites_names[iA])
+        if act.name in taxes_idx_by_name:
+            tax_index = taxes_idx_by_name[act.name]
 
             # Check how much of it is being consumed
-            tech_act_balance = activity_balances[:, iA].copy()
+            tech_act_balance = activity_balances[:, act.idx].copy()
             tech_act_balance[tech_act_balance > 0] = 0
             act_balance = np.sum(tech_use * (tech_act_balance.reshape(-1, 1) @ np.ones((1, nP))), axis=0)
 
@@ -65,25 +65,23 @@ def results_policy_cashflows(dimensions, parameters, types, activities, technolo
 
     # 3) Calculate all the feed-in subsidies ==================================
     iPc = np.array([cat == 'Feed-In subsidies' for cat in policy_cashflows_categories])
-    nAf = len(feedin_activities)
+    feedin_activity_objs = [activity_by_name.get(name) for name in feedin_activities]
     feedin_cashflow = np.zeros(nP)
-    for iTb in range(nTb):
+    for tech in tech_entities:
+        iTb = tech.idx
 
         # Check if it is eligible for a feedin subsidy
-        if feedin_subject[iTb] == 1:
+        if tech.feedin_subject == 1:
 
             # Check if there is installed capacity in any year
             if np.sum(tech_use[iTb, :]) > 0:
 
                 # Check if the technology is producing something subject to feed in subsidy
-                for iAf in range(nAf):
-                    if feedin_activities[iAf] in actitivites_names:
-
-                        # Find activity
-                        iA = actitivites_names.index(feedin_activities[iAf])
+                for iAf, act in enumerate(feedin_activity_objs):
+                    if act is not None:
 
                         # Find balance
-                        tech_act_balance = activity_balances[iTb, iA]
+                        tech_act_balance = activity_balances[iTb, act.idx]
                         if tech_act_balance < 0:
                             tech_act_balance = 0
                         act_balance = tech_use[iTb, :] * tech_act_balance
@@ -101,28 +99,28 @@ def results_policy_cashflows(dimensions, parameters, types, activities, technolo
 
     # Calculate and depreciate all investment subsidies
     iPc = np.array([cat == 'Investment subsidies' for cat in policy_cashflows_categories])
-    nAs = len(subsidy_activities)
     subsidy_cashflow = np.zeros(nP)
-    for iTb in range(nTb):
+    for tech in tech_entities:
+        iTb = tech.idx
 
         # Check if tech is subject to investment subsidy
-        if subsidy_subject[iTb] == 1:
+        if tech.subsidy_subject == 1:
 
             # Check if there were investments in any year
             if np.sum(investments[iTb, :]) > 0:
 
                 # Check which is the main activity
-                tech_act = activityper_tech[iTb]
+                tech_act = tech.activity
 
                 # Check if the activity is subject to investment subsidy
-                if tech_act in subsidy_activities:
-                    iAs_index = subsidy_activities.index(tech_act)
+                if tech_act is not None and tech_act.name in subsidy_idx_by_name:
+                    iAs_index = subsidy_idx_by_name[tech_act.name]
 
                     # Quantify the overnight investment costs
                     inv_tech = investments[iTb, :] * inv_cost[iTb, :]
 
                     # Depreciate the subsidy costs accordingly with government disc. rate
-                    tech_lifetime = ec_lifetime[iTb]
+                    tech_lifetime = tech.lifetime
                     annuity_fact = gov_dr / (1 - (1 + gov_dr) ** (-tech_lifetime))
                     dep_inv_tech = annuity_fact * inv_tech
 
@@ -135,7 +133,6 @@ def results_policy_cashflows(dimensions, parameters, types, activities, technolo
     policy_cashflows[iPc, :] = subsidy_cashflow
 
     # Save variables
-    results['policy_cashflows'] = policy_cashflows
-    
-    return results
+    results.policy_cashflows = policy_cashflows
 
+    return results
