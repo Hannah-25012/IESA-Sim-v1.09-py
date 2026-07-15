@@ -5,13 +5,13 @@ import pandas as pd
 def write_system_costs(activities, results, writer):
 
     # Export Parameters
-    periods = activities['periods']
-    cost_categories = results['costs']['categories']
-    system_costs = results['costs']['system']
+    periods = activities.periods
+    cost_categories = results.costs.categories
+    system_costs = results.costs.system
 
     # Sheet name
     sheet_name = 'System_costs'
-    
+
     df = pd.DataFrame(system_costs / 1000, index=cost_categories, columns=periods) # Create a DataFrame equivalent to the MATLAB cell array.
 
     # Write the Excel sheet using pandas' optimal method.

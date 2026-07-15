@@ -6,20 +6,20 @@ import matplotlib.pyplot as plt
 def graph_priceDuration(activities, font_name, font_size, color_code):
 
     # Extract parameters
-    periods = activities['periods']
-    activities_elec = activities['electricity']['names']
-    activities_elec_coord = activities['electricity']['coords']
-    prices_hourly = activities['prices']['hourly'] [:, activities_elec_coord, :]
+    periods = activities.periods
+    elec_activities = [a for a in activities.entities if a.is_electricity]
+    activities_elec_coord = activities.electricity.coords
+    prices_hourly = activities.prices.hourly[:, activities_elec_coord, :]
 
     # For each activity prepare price duration of every year
     nP = len(periods)
-    nAk = len(activities_elec)
+    nAk = len(elec_activities)
     nH = prices_hourly.shape[0]
     price_duration = np.zeros((nH, nP, nAk))
     for iAk in range(nAk):
         for iP in range(nP):
             price_duration[:, iP, iAk] = np.sort(prices_hourly[:, iAk, iP]) # Sort each column in ascending order
-    
+
     # For each activity prepare a new plot with the evolution of the price duration curve
     x_ticks = np.linspace(0, nH, num=11)  # creates ticks: 0, n_h/10, ..., n_h
     x_ticks_lbls = list(range(0, 101, 10))
@@ -27,15 +27,16 @@ def graph_priceDuration(activities, font_name, font_size, color_code):
     max_price = 300
     color_order = [16, 12, 11, 9, 18, 6, 7]  # Note: color_order values are 1-indexed in MATLAB; here we subtract 1 when indexing color_code.
 
-    for iAk in range(nAk):
+    for act in elec_activities:
+        iAk = act.elec_idx
 
         # Graph creation section
         plt.figure()
         lines = plt.plot(np.arange(1, nH + 1), price_duration[:, :, iAk] * 3.6, linewidth=2) # Plot each column of price_duration for the given activity and multiply by 3.6
-        y_lbl = f"{activities_elec[iAk]} - price duration in €/MWh"
+        y_lbl = f"{act.name} - price duration in €/MWh"
         plt.ylabel(y_lbl, fontname=font_name, fontsize=font_size)
         plt.xlabel('time duration in %', fontname=font_name, fontsize=font_size)
-        
+
         # Formatting section
         ax = plt.gca()
         ax.yaxis.grid(True)
@@ -49,9 +50,9 @@ def graph_priceDuration(activities, font_name, font_size, color_code):
         plt.legend(lbl, prop={'family': font_name, 'size': 12}, loc='best')
         ax.spines['top'].set_visible(False) # Remove top and right spines to mimic Matlab 'box off'
         ax.spines['right'].set_visible(False)
-        
+
         # Coloring section
         for iP in range(nP):
             lines[iP].set_color(color_code[color_order[iP] - 1]) # Subtract 1 from color_order value to convert MATLAB 1-indexing to Python's 0-indexing
-        
+
         plt.show(block=False)

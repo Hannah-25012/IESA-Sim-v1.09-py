@@ -4,18 +4,17 @@ import pandas as pd
 def write_hourly_gas_prices(activities, output_name):
 
     # Extract Parameters
-    periods = activities['periods']
-    activities_emission = activities['emissions']['names']
-    activities_gaseous = activities['gaseous']['names']
-    activities_gaseous_coord = activities['gaseous']['coords']
-    prices_hourly = activities['prices']['hourly'][:, activities_gaseous_coord, :]
+    periods = activities.periods
+    gaseous_activities = [a for a in activities.entities if a.is_gaseous]
+    activities_gaseous_coord = activities.gaseous.coords
+    prices_hourly = activities.prices.hourly[:, activities_gaseous_coord, :]
 
     # Sheet name
     sheet_name = 'Hourly_Gas_Prices_EURpMWh'
 
     # Build the cell to write
     nP = len(periods)
-    nAg = len(activities_gaseous)
+    nAg = len(gaseous_activities)
     nH = prices_hourly.shape[0]
     num_rows = nH + 2  # Create an empty cell matrix with dimensions (nH+2) x (nP*nAg+1)
     num_cols = nP * nAg + 1
@@ -24,9 +23,9 @@ def write_hourly_gas_prices(activities, output_name):
     # Fix the headers
     c[1][0] = 'Hour'
     col_index = 1
-    for iAg in range(nAg):
+    for act in gaseous_activities:
         for iP in range(nP):
-            c[0][col_index] = activities_gaseous[iAg]
+            c[0][col_index] = act.name
             c[1][col_index] = str(periods[iP])
             col_index += 1
 
@@ -35,12 +34,12 @@ def write_hourly_gas_prices(activities, output_name):
     for h in range(nH): # Fill the first column with hour numbers
         c[h + 2][0] = h + 1
 
-    for iAg in range(nAg):
+    for iAg, act in enumerate(gaseous_activities):
         for iP in range(nP):
             content_col_index += 1
 
             # Correct units if it's energy
-            if activities_gaseous[iAg] in activities_emission:
+            if act.is_emission:
                 corr_units = 1
             else:
                 corr_units = 3.6

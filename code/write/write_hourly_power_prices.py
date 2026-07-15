@@ -4,17 +4,17 @@ import pandas as pd
 def write_hourly_power_prices(activities, output_name):
 
     # Extract parameters
-    periods = activities['periods']
-    activities_elec = activities['electricity']['names']
-    activities_elec_coord = activities['electricity']['coords']
-    prices_hourly = activities['prices']['hourly'][:, activities_elec_coord, :]
+    periods = activities.periods
+    elec_activities = [a for a in activities.entities if a.is_electricity]
+    activities_elec_coord = activities.electricity.coords
+    prices_hourly = activities.prices.hourly[:, activities_elec_coord, :]
 
     # Sheet name
     sheet_name = 'Hourly_Power_Prices_EURpMWh'
 
     # Build the cell to write
     nP = len(periods)
-    nAk = len(activities_elec)
+    nAk = len(elec_activities)
     nH = prices_hourly.shape[0]  # Number of hours is assumed to be the first dimension
     num_cols = nP * nAk + 1
     num_rows = nH + 2
@@ -23,17 +23,18 @@ def write_hourly_power_prices(activities, output_name):
     # Fix the headers
     c[1][0] = 'Hour'
     col_counter = 0
-    for iAk in range(nAk):
+    for act in elec_activities:
         for i_p in range(nP):
             col_counter += 1
-            c[0][col_counter] = activities_elec[iAk]   # First header row: activity name
+            c[0][col_counter] = act.name   # First header row: activity name
             c[1][col_counter] = str(periods[i_p])         # Second header row: period as string
 
     # Fix the content
     col_counter = 0
     for i in range(nH): # Fill the first column (from row 3 onward) with hour numbers 1 to n_h
         c[i + 2][0] = i + 1
-    for iAk in range(nAk):
+    for act in elec_activities:
+        iAk = act.elec_idx
         for iP in range(nP):
             col_counter += 1
             col_data = prices_hourly[:, iAk, iP] * 3.6 # Extract the column vector for the current activity and period, multiply by 3.6

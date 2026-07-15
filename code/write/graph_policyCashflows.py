@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 def graph_policyCashflows(types, activities, results, font_name, font_size, color_code):
 
     # Extract parameters
-    policy_cashflows_categories = types['policy_cashflows_categories']
-    periods = activities['periods']
-    policy_cashflows = results['policy_cashflows'] / 1000.0
+    policy_cashflows_categories = types.policy_cashflows_categories
+    periods = activities.periods
+    policy_cashflows = results.policy_cashflows / 1000.0
 
     # Preparing the graph
     policy_cashflows_pos = np.copy(policy_cashflows)
@@ -44,7 +44,7 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
     ax.set_ylabel('policy cashflows [B€]', fontname=font_name, fontsize=font_size)
     ax.set_ylim([-100, 100])
     ax.set_yticks(np.arange(-100, 101, 20)) # Matlab displays the graph in 20-steps
-    
+
     # Formatting section
     ax.yaxis.grid(True)
     ax.set_xticks(periods)
@@ -62,7 +62,7 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
         ax.legend(lbl, prop={'family': font_name, 'size': 12}, ncol=3)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    
+
     # Coloring section
     if len(bars_a) >= 4:
         for patch in bars_a[0]:
@@ -82,6 +82,6 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
             patch.set_facecolor(color_code[5, :])
         for patch in bars_b[3]:
             patch.set_facecolor(color_code[6, :])
-    
+
     # Show the plot
     plt.show(block=False)

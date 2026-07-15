@@ -4,22 +4,17 @@ import pandas as pd
 def write_LCOPs(activities, technologies, writer):
 
     # Extract Parameters
-    periods = activities['periods']
-    tech_balancers = technologies['balancers']['ids']
-    activity_per_tech = technologies['balancers']['activities']
-    tech_names = technologies['balancers']['names']
-    tech_sector = technologies['balancers']['sectors']
-    tech_subsector = technologies['balancers']['subsectors']
-    tech_units = technologies['balancers']['units']
-    categories_LCOPs = technologies['balancers']['lcops']['categories']
-    tech_LCOPs_matrix = technologies['balancers']['lcops']['matrix']
+    periods = activities.periods
+    tech_entities = technologies.balancers.entities
+    categories_LCOPs = technologies.balancers.lcops.categories
+    tech_LCOPs_matrix = technologies.balancers.lcops.matrix
 
     # Sheet name
     sheet_name = 'Technology_LCOPs'
 
     # Build the cell to write
     nP = len(periods)
-    nTb = len(tech_balancers)
+    nTb = len(tech_entities)
     nLT = len(categories_LCOPs)
     C = [["" for _ in range(nP + 7)] for _ in range(nTb * nLT + 1)] # The dimensions are (nTb*nLT+1) x (nP+7)
     C[0][0] = 'Technology' # Fill header row
@@ -29,33 +24,33 @@ def write_LCOPs(activities, technologies, writer):
     C[0][4] = 'Main Activity'
     C[0][5] = 'Units'
     C[0][6] = 'LCOP category'
-    
+
     for iP in range(nP):
         C[0][7 + iP] = str(periods[iP])
-    
+
     # For each technology, report the LCOPs
     i_row = 0
-    for iTb in range(nTb):
+    for tech in tech_entities:
 
         # For each LCOPs category, report the value
         for iLT in range(nLT):
 
             # Advance one row
             i_row += 1
-            
+
             # Store the values in the cell array
-            C[i_row][0] = tech_balancers[iTb]
-            C[i_row][1] = tech_names[iTb]
-            C[i_row][2] = tech_sector[iTb]
-            C[i_row][3] = tech_subsector[iTb]
-            C[i_row][4] = activity_per_tech[iTb]
-            C[i_row][5] = tech_units[iTb]
+            C[i_row][0] = tech.id
+            C[i_row][1] = tech.name
+            C[i_row][2] = tech.sector
+            C[i_row][3] = tech.subsector
+            C[i_row][4] = tech.activity_name
+            C[i_row][5] = tech.unit
             C[i_row][6] = categories_LCOPs[iLT]
-            
+
             # Fill LCOP values for each period.
             for iP in range(nP): # This replicates MATLAB's: C(iRow,8:end) = num2cell(permute(tech_LCOPs_matrix(iTb,iLT,:), [1, 3, 2]));
-                C[i_row][7 + iP] = tech_LCOPs_matrix[iTb][iLT][iP]
-    
+                C[i_row][7 + iP] = tech_LCOPs_matrix[tech.idx][iLT][iP]
+
     # Write the Excel sheet using pandas
     df = pd.DataFrame(C)
     df.to_excel(writer, sheet_name=sheet_name, index=False, header=False)

@@ -4,8 +4,8 @@ import pandas as pd
 def write_system_emisisons(activities, results, writer):
 
     # Export Parameters
-    periods = activities['periods']
-    emissions = results['emissions']
+    periods = activities.periods
+    emissions = results.emissions
 
     # Sheet name
     sheet_name = 'System_emissions'

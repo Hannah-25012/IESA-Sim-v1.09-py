@@ -8,23 +8,23 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
 
     # Extract parameters
     nEl = dimensions['nEl']
-    energy_labels = types['energy']['labels']
-    periods = activities['periods']
-    primary_energy = results['primary']
+    energy_labels = types.energy.labels
+    periods = activities.periods
+    primary_energy = results.primary
 
     # Order the graph
     ordered_labels = ['Coal', 'Oil', 'Natural Gas', 'Nuclear', 'Waste', 'Biomass',
                       'Bio-fuels', 'Hydrogen', 'Solar', 'Wind', 'Other RE', 'Electricity',
                       'Synfuels', 'Oil Products', 'Ammonia', 'Heat', 'NA']
-    order = []
 
-    # The list so far contains nan as the last value, so we need to replace with 'NA' to match the ordered_labels 
-    energy_labels = [x if not (isinstance(x, float) and math.isnan(x)) 
+    # The list so far contains nan as the last value, so we need to replace with 'NA' to match the ordered_labels
+    energy_labels = [x if not (isinstance(x, float) and math.isnan(x))
                  else 'NA'
                  for x in energy_labels]
-    
-    for i in range(nEl):
-        order.append(energy_labels.index(ordered_labels[i]))
+
+    # Name -> position lookup, resolved once instead of re-scanning energy_labels per ordered label.
+    label_idx_by_name = {name: i for i, name in enumerate(energy_labels)}
+    order = [label_idx_by_name[ordered_labels[i]] for i in range(nEl)]
 
     # Preparing the graph
     primary_energy_pos = primary_energy.copy()
@@ -70,11 +70,10 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
     for tick in ax.get_yticklabels():
         tick.set_fontname(font_name)
         tick.set_fontsize(font_size)
-    
+
     ax.legend(ncol=5, prop={'family': font_name, 'size': 12}) # Legend (horizontal orientation, 5 columns)
-    
+
     ax.spines['top'].set_visible(False) # Remove top and right borders (box off)
     ax.spines['right'].set_visible(False)
-    
-    plt.show(block=False)
 
+    plt.show(block=False)

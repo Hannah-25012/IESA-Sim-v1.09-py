@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 def graph_systemCosts(activities, results, font_name, font_size, color_code):
 
     # Export Parameters
-    periods = activities['periods']
-    cost_categories = results['costs']['categories']
-    system_costs = results['costs']['system']
+    periods = activities.periods
+    cost_categories = results.costs.categories
+    system_costs = results.costs.system
 
     # Order the graph
     ordered_label = cost_categories
