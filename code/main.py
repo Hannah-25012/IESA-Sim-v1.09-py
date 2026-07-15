@@ -23,6 +23,7 @@ from mod2_invest import mod2_invest
 from mod3_dispatch import mod3_dispatch
 from mod4_postprocessing import mod4_postprocessing
 from mod5_results import mod5_results
+from mod6_save_duckdb import save_state_duckdb, save_excel_duckdb
 
 def main(settings):
 
@@ -149,6 +150,14 @@ def main(settings):
                 'results': results
             }, file)
         print(f"Output successfully saved to {output_file}")
+
+        # Same output, as relational duckDB databases instead of a pickle:
+        # one mirroring the full state above, one mirroring the Excel reports.
+        state_db_path = str(Path(output_path) / 'simulation_state.duckdb')
+        save_state_duckdb(dimensions, parameters, types, activities, technologies, profiles, results, agents, state_db_path)
+
+        excel_db_path = str(Path(output_path) / 'simulation_excel.duckdb')
+        save_excel_duckdb(types, activities, technologies, agents, results, excel_db_path)
 
 
     # Print the last time stamp
