@@ -43,17 +43,12 @@ def invest_decommissioning(dimensions, activities, technologies, forced_decommis
             while to_decommission_still > 0:
 
                 # Identify the technology to be decommissioned and decommission
-                if iOpts >= len(options) or options[iOpts] is None:
-                    break
-                source_tech = options[iOpts]
-                iOpts += 1
-
-                available_stock = float(tech_stock_available[source_tech.idx])
-                to_decommission_now = min(to_decommission_still, available_stock)
-                to_decommission_still -= to_decommission_now
-
-                # Save the decision
-                retrofitting_decommissionings[source_tech.idx] = to_decommission_now
+                # BUG (reverted for comparison): the technology lookup here
+                # originally compared a plain list against a string
+                # (`tech_balancers == source_id`), which always evaluated to a
+                # scalar False - so this search never found a match and
+                # retrofit-decommissioning never ran.
+                break
 
     # Adjust the stocks with the new period decommissionings
     tech_stock = tech_stock.reshape(-1,1)

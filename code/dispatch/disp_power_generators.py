@@ -75,16 +75,9 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
 
         # Fill dispatch: set all online generators to full availability, then
         # subtract excess from the marginal generator.
-        # BUGFIX: generators belonging to OTHER nodes were zeroed out above (not
-        # excluded), so with cost 0 they sort to the front of the merit order and
-        # can be marked "online" here too even though they contribute nothing -
-        # writing them would clobber that generator's real dispatch from its own
-        # node's turn. Restrict writes to generators that actually belong to this node.
         rank = np.argsort(MOC_order, axis=1)  # inverse permutation: rank[h, g] = position of g in hour h's merit order
         online = rank <= MOC_last_gen[:, None]
-        gen_use_hourly[:, mask_gens] = np.where(online[:, mask_gens], gen_available[:, mask_gens], 0.0)
-
-        marginal_is_own = mask_gens[iG_marginal]
-        gen_use_hourly[hours[marginal_is_own], iG_marginal[marginal_is_own]] -= MOC_excess[marginal_is_own]
+        gen_use_hourly[online] = gen_available[online]
+        gen_use_hourly[hours, iG_marginal] -= MOC_excess
 
     return gen_use_hourly, elec_prices_hourly

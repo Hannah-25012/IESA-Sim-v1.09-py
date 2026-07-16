@@ -133,16 +133,9 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
 
     # === Calculate the decommissionings due to investments ===
     print("--Determining the decommissionings based on the investments...")
-    # Pass tech_stock_new_original (net of this period's already-planned
-    # decommissioning), not the raw tech_stock_exist: retrofit_potential above
-    # was computed against that same net figure (via tech_stock_new), so
-    # checking a retrofit source's available stock against the raw,
-    # pre-decommissioning figure here would let this period's planned
-    # decommissioning and retrofit-sourced decommissioning both draw against
-    # the same units and jointly overdraw the source technology's stock.
     technologies = invest_decommissioning(
         dimensions, activities, technologies, forced_decommissionings, retrofit_sources,
-        retrofit_options, retrofit_potential, tech_stock_new_original, iP
+        retrofit_options, retrofit_potential, tech_stock_exist, iP
     )
 
     return activities, technologies
