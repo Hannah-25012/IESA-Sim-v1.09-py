@@ -147,8 +147,9 @@ def mod0_read_data_save_duck(file_name):
 
     df_parameters_parameters_scarcity = pd.DataFrame(parameters_scarcity)
     try:
-        con.execute("CREATE TABLE original_params AS SELECT * FROM parameters_input")
-        con.execute("ALTER TABLE original_params ADD PRIMARY KEY (Name)")
+        # Note: the full raw parameter sheet (parameters_input) is not written here -
+        # nothing downstream reads it; original_params_short/powinv/scarcity below are
+        # the curated subsets mod0_load_duckdb.py actually queries.
         con.execute("CREATE TABLE original_params_short AS SELECT * FROM parameters_input_short")
         con.execute("ALTER TABLE original_params_short ADD PRIMARY KEY (Name)")
         con.execute("CREATE TABLE powinv AS SELECT * FROM parameters_powinv")
@@ -483,6 +484,30 @@ def mod0_read_data_save_duck(file_name):
     tech_stock_min = read_tech(min_cols).fillna(0).to_numpy()
     tech_stock_max = read_tech(max_cols).fillna(0).to_numpy()
 
+    print('--Saving technology category lookups to duckdb')
+    try:
+        df_tech_categories = pd.DataFrame({"category": sorted(set(tech_categories))})
+        con.execute(build_create_table_sql("technology_categories", df_tech_categories, pk="category"))
+        con.execute("INSERT INTO technology_categories SELECT * FROM df_tech_categories")
+
+        df_dispatch_types = pd.DataFrame({"dispatch_type": sorted(set(dispatch_type_tech))})
+        con.execute(build_create_table_sql("technology_dispatch_types", df_dispatch_types, pk="dispatch_type"))
+        con.execute("INSERT INTO technology_dispatch_types SELECT * FROM df_dispatch_types")
+
+        df_social_perceptions = pd.DataFrame({"social_perception": sorted(set(social_perception_tech))})
+        con.execute(build_create_table_sql("technology_social_perceptions", df_social_perceptions, pk="social_perception"))
+        con.execute("INSERT INTO technology_social_perceptions SELECT * FROM df_social_perceptions")
+
+        df_complexities = pd.DataFrame({"perceived_complexity": sorted(set(perceived_complexity_tech))})
+        con.execute(build_create_table_sql("technology_complexities", df_complexities, pk="perceived_complexity"))
+        con.execute("INSERT INTO technology_complexities SELECT * FROM df_complexities")
+
+        df_flexibility_forms = pd.DataFrame({"flexibility_form": sorted(set(flexibility_form))})
+        con.execute(build_create_table_sql("technology_flexibility_forms", df_flexibility_forms, pk="flexibility_form"))
+        con.execute("INSERT INTO technology_flexibility_forms SELECT * FROM df_flexibility_forms")
+    except Exception as e:
+        print(f"error in saving technology category lookups to duckdb: {e}")
+
     print('--Saving technologies to duckdb')
     try:
         technologies_df = pd.DataFrame({
@@ -519,7 +544,12 @@ def mod0_read_data_save_duck(file_name):
         })
         con.execute(build_create_table_sql(
             "technologies", technologies_df, pk="id",
-            fks=[("activity", "activities", "Name"), ("hourly_profile", "hourly_profile_types", "name")]
+            fks=[("activity", "activities", "Name"), ("hourly_profile", "hourly_profile_types", "name"),
+                 ("sector", "sectors", "sectors"), ("category", "technology_categories", "category"),
+                 ("dispatch_type", "technology_dispatch_types", "dispatch_type"),
+                 ("social_perception", "technology_social_perceptions", "social_perception"),
+                 ("perceived_complexity", "technology_complexities", "perceived_complexity"),
+                 ("flexibility_form", "technology_flexibility_forms", "flexibility_form")]
         ))
         con.execute("INSERT INTO technologies SELECT * FROM technologies_df")
 
@@ -589,6 +619,14 @@ def mod0_read_data_save_duck(file_name):
     cap2act_infra = read_infra([infra_col(Infrastructure.cap2act)]).fillna(0).squeeze().to_numpy()
     tech_stock_exist_infra = read_infra([infra_col(Infrastructure.tech_stock_exist)]).fillna(0).squeeze().to_numpy()
 
+    print('--Saving infrastructure category lookup to duckdb')
+    try:
+        df_infra_categories = pd.DataFrame({"category": sorted(set(tech_categories_infra))})
+        con.execute(build_create_table_sql("infrastructure_categories", df_infra_categories, pk="category"))
+        con.execute("INSERT INTO infrastructure_categories SELECT * FROM df_infra_categories")
+    except Exception as e:
+        print(f"error in saving infrastructure category lookup to duckdb: {e}")
+
     print('--Saving infrastructure to duckdb')
     try:
         infrastructure_df = pd.DataFrame({
@@ -604,7 +642,7 @@ def mod0_read_data_save_duck(file_name):
         })
         con.execute(build_create_table_sql(
             "infrastructure", infrastructure_df, pk="id",
-            fks=[("activity", "activities", "Name")]
+            fks=[("activity", "activities", "Name"), ("category", "infrastructure_categories", "category")]
         ))
         con.execute("INSERT INTO infrastructure SELECT * FROM infrastructure_df")
 
