@@ -118,46 +118,38 @@ def mod0_read_data_save_duck(file_name):
     min_spread_factor = Parameters.Parameters.min_spread_factor
     min_spread = min_spread_value / min_spread_factor
 
-    parameters_powinv = pd.DataFrame(columns=["Name", "Value"])
-    # Store parameters in
-
+    # All scalar model parameters, in one table instead of three
+    # identically-shaped ones (powinv/scarcity/original_params_short used to
+    # be separate tables only because the Excel sheet happened to group
+    # them) - Category distinguishes the groups and is itself FK'd to a
+    # small lookup table. Note: the full raw parameter sheet
+    # (parameters_input) is not written here - nothing downstream reads it.
     rows = []
-    rows.append({"Name": "SPBT_benchmark", "Value": powinv_SPBT_benchmark})
-    rows.append({"Name": "SPBT_min", "Value": powinv_SPBT_min})
-    rows.append({"Name": "CR_threshold", "Value": powinv_CR_threshold})
-    rows.append({"Name": "CR_min", "Value": powinv_CR_min})
-    rows.append({"Name": "NUF_threshold", "Value": powinv_NUF_threshold})
-    rows.append({"Name": "NUF_min", "Value": powinv_NUF_min})
-    parameters_powinv = pd.DataFrame(rows, columns=["Name", "Value"])
+    rows.append({"Name": "SPBT_benchmark", "Category": "powinv", "Value": powinv_SPBT_benchmark})
+    rows.append({"Name": "SPBT_min", "Category": "powinv", "Value": powinv_SPBT_min})
+    rows.append({"Name": "CR_threshold", "Category": "powinv", "Value": powinv_CR_threshold})
+    rows.append({"Name": "CR_min", "Category": "powinv", "Value": powinv_CR_min})
+    rows.append({"Name": "NUF_threshold", "Category": "powinv", "Value": powinv_NUF_threshold})
+    rows.append({"Name": "NUF_min", "Category": "powinv", "Value": powinv_NUF_min})
+    rows.append({"Name": "penalization", "Category": "scarcity", "Value": scarcity_penalization})
+    rows.append({"Name": "gas_premium", "Category": "scarcity", "Value": gas_premium})
+    rows.append({"Name": "voll", "Category": "other", "Value": voll})
+    rows.append({"Name": "min_spread", "Category": "other", "Value": min_spread})
+    rows.append({"Name": "gov_dr", "Category": "other", "Value": gov_dr})
+    rows.append({"Name": "exports_value", "Category": "other", "Value": exports_value})
+    parameters_df = pd.DataFrame(rows, columns=["Name", "Category", "Value"])
 
-    parameters_scarcity = pd.DataFrame(columns=["Name", "Value"])
-    # Store parameters in
-
-    rows = []
-    rows.append({"Name": "penalization", "Value": scarcity_penalization})
-    rows.append({"Name": "gas_premium", "Value": gas_premium})
-    parameters_scarcity = pd.DataFrame(rows, columns=["Name", "Value"])
-
-    rows = []
-    rows.append({"Name": "voll", "Value": voll})
-    rows.append({"Name": "min_spread", "Value": min_spread})
-    rows.append({"Name": "gov_dr", "Value": gov_dr})
-    rows.append({"Name": "exports_value", "Value": exports_value})
-    parameters_input_short = pd.DataFrame(rows, columns=["Name", "Value"])
-
-    df_parameters_parameters_scarcity = pd.DataFrame(parameters_scarcity)
     try:
-        # Note: the full raw parameter sheet (parameters_input) is not written here -
-        # nothing downstream reads it; original_params_short/powinv/scarcity below are
-        # the curated subsets mod0_load_duckdb.py actually queries.
-        con.execute("CREATE TABLE original_params_short AS SELECT * FROM parameters_input_short")
-        con.execute("ALTER TABLE original_params_short ADD PRIMARY KEY (Name)")
-        con.execute("CREATE TABLE powinv AS SELECT * FROM parameters_powinv")
-        con.execute("ALTER TABLE powinv ADD PRIMARY KEY (Name)")
-        con.execute("CREATE TABLE scarcity AS SELECT * FROM parameters_scarcity")
-        con.execute("ALTER TABLE scarcity ADD PRIMARY KEY (Name)")
-    except:
-        print("error in saving Parameters to duckdb")
+        df_parameter_categories = pd.DataFrame({"Category": sorted(parameters_df["Category"].unique())})
+        con.execute(build_create_table_sql("parameter_categories", df_parameter_categories, pk="Category"))
+        con.execute("INSERT INTO parameter_categories SELECT * FROM df_parameter_categories")
+
+        con.execute(build_create_table_sql(
+            "parameters", parameters_df, pk="Name", fks=[("Category", "parameter_categories", "Category")]
+        ))
+        con.execute("INSERT INTO parameters SELECT * FROM parameters_df")
+    except Exception as e:
+        print(f"error in saving Parameters to duckdb: {e}")
 
     # === Types sheet ===
     print('--Reading types sheet')

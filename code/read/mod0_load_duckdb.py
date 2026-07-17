@@ -21,26 +21,24 @@ def _pivot(df, row_col, row_order, col_col, col_order, value_col):
 
 
 def _load_parameters(con):
-    powinv = dict(con.execute("SELECT Name, Value FROM powinv").fetchall())
-    scarcity = dict(con.execute("SELECT Name, Value FROM scarcity").fetchall())
-    short = dict(con.execute("SELECT Name, Value FROM original_params_short").fetchall())
+    values = dict(con.execute("SELECT Name, Value FROM parameters").fetchall())
     return Struct(
         powinv=Struct(
-            SPBT_benchmark=powinv["SPBT_benchmark"],
-            SPBT_min=powinv["SPBT_min"],
-            CR_threshold=powinv["CR_threshold"],
-            CR_min=powinv["CR_min"],
-            NUF_threshold=powinv["NUF_threshold"],
-            NUF_min=powinv["NUF_min"],
+            SPBT_benchmark=values["SPBT_benchmark"],
+            SPBT_min=values["SPBT_min"],
+            CR_threshold=values["CR_threshold"],
+            CR_min=values["CR_min"],
+            NUF_threshold=values["NUF_threshold"],
+            NUF_min=values["NUF_min"],
         ),
         scarcity=Struct(
-            penalization=scarcity["penalization"],
-            gas_premium=scarcity["gas_premium"],
+            penalization=values["penalization"],
+            gas_premium=values["gas_premium"],
         ),
-        voll=short["voll"],
-        min_spread=short["min_spread"],
-        gov_dr=short["gov_dr"],
-        exports_value=short["exports_value"],
+        voll=values["voll"],
+        min_spread=values["min_spread"],
+        gov_dr=values["gov_dr"],
+        exports_value=values["exports_value"],
     )
 
 
