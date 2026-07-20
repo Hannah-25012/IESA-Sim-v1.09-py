@@ -77,15 +77,14 @@ def build_policy_long_df(policy_matrix, periods):
     long_df["seq"] = long_df["row"]
     return long_df[["activity_name", "unit", "period", "value", "seq"]]
 
-def mod0_read_data_save_duck(file_name):
-    """Read the Excel input file and (re)populate simmodel.duckdb.
+def mod0_read_data_save_duck(file_name, db_path="SIMmodel.duckdb"):
+    """Read the Excel input file and (re)populate the duckDB database at db_path.
 
     This is a pure side-effecting loader now: the database is the only
     output. Callers that need the data in memory should query it back
-    with mod0_load_duckdb.load_from_duckdb().
+    with mod0_load_duckdb.load_from_duckdb(db_path).
     """
 
-    db_path = "SIMmodel.duckdb"
     if os.path.exists(db_path):
         os.remove(db_path)
     con = duckdb.connect(db_path)

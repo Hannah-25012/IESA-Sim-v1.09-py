@@ -43,11 +43,15 @@ def main(settings):
     plot_price_duration = settings['plot_price_duration']
     print("Settings were successfully implemented")
 
-    # Read the data from the excel input file into the database, if requested
-    db_path = "SIMmodel.duckdb"
+    # Read the data from the excel input file into the database, if requested.
+    # db_path picks which duckDB file to read from/write to - defaults to
+    # SIMmodel.duckdb in the working directory, but can be pointed at any
+    # saved snapshot (e.g. to run straight off a previously-built database
+    # without touching Excel at all, by setting read_input to false).
+    db_path = settings.get('db_path') or "SIMmodel.duckdb"
     if read_input is True:
         print(f"Reading the excel file {input_file} into {db_path} ...")
-        mod0_read_data_save_duck(input_file)
+        mod0_read_data_save_duck(input_file, db_path)
         print("The input data was retrieved successfully from the excel file")
 
     # Either way, the simulation runs off the database, not off dicts built

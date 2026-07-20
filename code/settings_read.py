@@ -17,6 +17,11 @@ def settings_read(version_number):
     file_name = json_settings['file_name']
     scenario_name = json_settings['scenario_name']
     read_input = json_settings['read_input']
+    # Which duckDB file to read from/write to - optional, defaults to
+    # SIMmodel.duckdb in the working directory when absent from the settings
+    # file (see main.py). Lets a run be pointed at a specific saved database
+    # snapshot instead of always the one in the working directory.
+    db_path = json_settings.get('db_path')
     save_output = json_settings['save_output']
     plot_price_duration = json_settings['plot_price_duration']
     nIp = json_settings['nIp']  # Number of power iterations
@@ -35,6 +40,7 @@ def settings_read(version_number):
         'scenario_name' : scenario_name,
         'output': output_path,
         'read_input': read_input,
+        'db_path': db_path,
         'save_output': save_output,
         'plot_price_duration': plot_price_duration,
         'iterations': {

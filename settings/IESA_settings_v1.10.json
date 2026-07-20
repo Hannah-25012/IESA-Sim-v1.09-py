@@ -1,6 +1,7 @@
 {
     "file_name": "IESA-Opt_v4.4.5 Policy + Agents.xlsx",
     "scenario_name": "Policy + Agents",
+    "db_path": "SIMmodel.duckdb",
     "read_input": true,
     "save_output": true,
     "plot_price_duration": false,
