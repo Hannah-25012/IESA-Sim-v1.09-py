@@ -36,7 +36,7 @@ def rename_volumes_col(col):
 
 def flatten_header(columns):
     cols = [
-        " / ".join(str(x) for x in col if pd.notna(x) and not str(x).startswith("Unnamed"))
+        " / ".join(str(x).strip() for x in col if pd.notna(x) and not str(x).startswith("Unnamed"))
         for col in columns
     ]
     return [re.sub(r'\s*/?\s*\[.*\]\s*$', '', col).strip() for col in cols]
