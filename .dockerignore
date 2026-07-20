@@ -1,0 +1,22 @@
+# VCS / editor / tooling cruft
+.git
+.gitignore
+.idea
+.claude
+.vscode
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Generated artifacts - rebuilt at runtime, not part of the image's source.
+# The Excel file under input/ IS shipped (it's the source data); everything
+# below is derived from it.
+*.duckdb
+data.pkl
+output/
+code/output/
+code/input/
+input/.iesa_cache/
+input/~$*

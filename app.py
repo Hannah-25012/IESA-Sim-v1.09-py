@@ -1,0 +1,217 @@
+"""FastAPI wrapper so this project can be called from the unified-project
+gateway (see D:\\I-AI\\UniversityCode\\unified-project\\templates\\python-backend).
+
+A full IESA-Sim run can take 10+ minutes, which is longer than the
+gateway's default proxy timeout and longer than a single HTTP request
+should reasonably block for - so /run deviates from the template's
+strictly-synchronous contract and uses a small async job pattern instead
+(the unified-project's dbcompare-backend already establishes that custom
+endpoints are fine for a backend with its own domain shape):
+
+  GET  /health              -> liveness check
+  POST /input               -> multipart file upload (.xlsx) -> {"file_name": "..."},
+                                saved to input/ so a run can reference it
+  POST /run                 -> {"input": {...}} -> {"job_id": "..."}, starts a
+                                background run and returns immediately
+  GET  /run/{job_id}        -> {"status": "pending"|"running"|"done"|"error",
+                                "output": {...} | null, "meta": {...} | null,
+                                "error": "..." | null}
+  GET  /run/{job_id}/download -> zip of simulation_excel.duckdb + simulation_results.pkl
+                                for the GUI's "save results" action (only once done;
+                                simulation_state.duckdb, the multi-GB raw solver state,
+                                is deliberately left out of this bundle)
+
+Only one simulation runs at a time (single-worker executor) - the model
+mutates a handful of on-disk files (SIMmodel.duckdb, output/<scenario>/...)
+that aren't safe to write to concurrently from two runs.
+"""
+import io
+import os
+import sys
+import time
+import uuid
+import zipfile
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any, Optional
+
+import duckdb
+import matplotlib
+matplotlib.use("Agg")  # headless container: no display to show interactive figures on
+
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
+_code_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code")
+if _code_dir not in sys.path:
+    sys.path.insert(0, _code_dir)
+
+from main import main as run_simulation  # noqa: E402  (path setup must run first)
+
+app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_executor = ThreadPoolExecutor(max_workers=1)
+_jobs: dict[str, dict[str, Any]] = {}
+
+# Same shape/defaults as settings/IESA_settings_v1.10.json - callers only
+# need to override the fields they care about.
+_DEFAULT_SETTINGS = {
+    "file_name": "IESA-Opt_v4.4.5 Policy + Agents.xlsx",
+    "scenario_name": "Policy + Agents",
+    "db_path": "SIMmodel.duckdb",
+    # Defaults to True so a freshly-built container (no duckDB baked in,
+    # see .dockerignore) is self-sufficient on its first run. Pass
+    # read_input=false for faster subsequent runs once db_path already
+    # exists (e.g. on a mounted volume that persists across restarts).
+    "read_input": True,
+    "plot_price_duration": False,
+    "nIp": 1,
+    "nIb": 10,
+    "nId": 2,
+    "year_end": 2050,
+}
+
+
+class RunRequest(BaseModel):
+    input: Optional[dict] = None
+
+
+def _build_settings(overrides: Optional[dict]) -> dict:
+    merged = dict(_DEFAULT_SETTINGS)
+    if overrides:
+        unknown = set(overrides) - set(_DEFAULT_SETTINGS)
+        if unknown:
+            raise HTTPException(400, f"Unknown input field(s): {sorted(unknown)}")
+        merged.update(overrides)
+
+    return {
+        "input": os.path.join("input", merged["file_name"]),
+        "scenario_name": merged["scenario_name"],
+        "db_path": merged["db_path"],
+        "read_input": merged["read_input"],
+        "save_output": True,  # forced on: /run's output summary is read back from it
+        "plot_price_duration": merged["plot_price_duration"],
+        "iterations": {
+            "power": merged["nIp"],
+            "balancing": merged["nIb"],
+            "dispatch": merged["nId"],
+        },
+        "year_end": merged["year_end"],
+    }
+
+
+def _summarize_output(scenario_name: str) -> dict:
+    """Pull a compact JSON-safe summary from simulation_excel.duckdb rather
+    than returning the full relational database (which includes large
+    hourly tables) inline in the HTTP response."""
+    db_path = Path("output") / scenario_name / "simulation_excel.duckdb"
+    if not db_path.exists():
+        return {}
+
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        def rows(sql):
+            cols = [d[0] for d in con.execute(sql).description]
+            return [dict(zip(cols, r)) for r in con.execute(sql).fetchall()]
+
+        return {
+            "system_costs": rows("SELECT * FROM system_costs ORDER BY period, cost_category"),
+            "system_emissions": rows("SELECT * FROM system_emissions ORDER BY period"),
+            "policy_cashflows": rows("SELECT * FROM policy_cashflows ORDER BY period, cashflow_category"),
+        }
+    finally:
+        con.close()
+
+
+def _run_job(job_id: str, settings: dict) -> None:
+    _jobs[job_id]["status"] = "running"
+    started = time.perf_counter()
+    try:
+        run_simulation(settings)
+        _jobs[job_id].update(
+            status="done",
+            output=_summarize_output(settings["scenario_name"]),
+            meta={
+                "language": "python",
+                "version": "1.0",
+                "scenario_name": settings["scenario_name"],
+                "year_end": settings["year_end"],
+                "duration_seconds": round(time.perf_counter() - started, 1),
+            },
+        )
+    except Exception as e:  # noqa: BLE001 - surface any failure to the job status instead of crashing the worker
+        _jobs[job_id].update(status="error", error=f"{type(e).__name__}: {e}")
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+@app.post("/input")
+async def upload_input(file: UploadFile = File(...)):
+    filename = os.path.basename(file.filename or "")
+    if not filename.lower().endswith(".xlsx"):
+        raise HTTPException(400, "Input file must be a .xlsx workbook")
+
+    os.makedirs("input", exist_ok=True)
+    dest = os.path.join("input", filename)
+    with open(dest, "wb") as f:
+        f.write(await file.read())
+
+    return {"file_name": filename}
+
+
+_DOWNLOAD_FILES = ["simulation_excel.duckdb", "simulation_results.pkl"]
+
+
+@app.get("/run/{job_id}/download")
+def download_results(job_id: str):
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"No job with id {job_id!r}")
+    if job["status"] != "done":
+        raise HTTPException(400, f"Job is {job['status']!r}, not done yet")
+
+    scenario_name = job["meta"]["scenario_name"]
+    out_dir = Path("output") / scenario_name
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for name in _DOWNLOAD_FILES:
+            path = out_dir / name
+            if path.exists():
+                zf.write(path, arcname=name)
+    buf.seek(0)
+
+    zip_name = f"{scenario_name}_results.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
+
+
+@app.post("/run")
+def run(req: RunRequest):
+    settings = _build_settings(req.input)
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {"status": "pending", "output": None, "meta": None, "error": None}
+    _executor.submit(_run_job, job_id, settings)
+    return {"job_id": job_id}
+
+
+@app.get("/run/{job_id}")
+def run_status(job_id: str):
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"No job with id {job_id!r}")
+    return job

@@ -37,6 +37,12 @@ def main(settings):
     # Implement the settings
     input_file = settings['input']
     output_path = os.path.join('output', settings['scenario_name'])
+    # results_write() (called from mod5_results, below) writes Excel reports
+    # into output_path directly and doesn't create it first - only the
+    # pickle-saving step further down does its own mkdir. A fresh checkout
+    # (or container) with no output/ directory yet would otherwise crash
+    # here, so ensure it exists up front regardless of save_output.
+    os.makedirs(output_path, exist_ok=True)
     read_input = settings['read_input']
     save_output = settings['save_output']
     year_end = settings['year_end']
