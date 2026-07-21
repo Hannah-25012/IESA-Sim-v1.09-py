@@ -37,7 +37,9 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
     lbl = [energy_labels[i] for i in order]
 
     # Creating the graph
-    fig, ax = plt.subplots()
+    # Sized wider/taller than matplotlib's 6.4x4.8 default so the 5-column,
+    # up-to-17-entry legend below the axes doesn't get clipped by the figure edge.
+    fig, ax = plt.subplots(figsize=(10, 7))
     y1_plot = y1[order, :] # Reorder data as in Matlab: y1_plot = y1(order,:) and y2_plot = y2(order,:)
     y2_plot = y2[order, :]
 
@@ -60,7 +62,15 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
         bottom_neg = bottom_neg + y2_plot[i, :]
 
     ax.set_ylabel('primary energy source [PJ]', fontname=font_name, fontsize=font_size)
-    ax.set_ylim([-2000, 6000])
+
+    # Fixed [-2000, 6000] limits (MATLAB-era default) clipped everything above
+    # ~6000 PJ - e.g. all of Nuclear/Solar/Wind, stacked higher up - whenever a
+    # scenario's total primary energy ran bigger than that. Size to the actual
+    # data instead, with a 10% margin so nothing touches the axes edge.
+    top = np.sum(y1_plot, axis=0).max()
+    bottom = np.sum(y2_plot, axis=0).min()
+    margin = 0.1 * (top - bottom)
+    ax.set_ylim(bottom - margin, top + margin)
 
     # Formatting section
     ax.yaxis.grid(True)
@@ -76,4 +86,5 @@ def graph_primaryEnergy(dimensions, types, activities, results, font_name, font_
     ax.spines['top'].set_visible(False) # Remove top and right borders (box off)
     ax.spines['right'].set_visible(False)
 
+    fig.tight_layout()
     plt.show(block=False)

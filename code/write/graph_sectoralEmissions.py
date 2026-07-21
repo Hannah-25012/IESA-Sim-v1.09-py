@@ -49,7 +49,9 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
 
     # Creating the graph (plot y1 and y2 as stacked bars)
     # y1
-    _ , ax = plt.subplots()
+    # Sized wider/taller than the 6.4x4.8 default so the 4-column, up-to-16-entry
+    # legend doesn't get clipped by the figure edge.
+    _ , ax = plt.subplots(figsize=(10, 7))
     bars_a = []
     bottom = np.zeros_like(periods, dtype=float)
     for i in range(y1.shape[0]):
@@ -109,4 +111,5 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
         for rect in bar_container:
             rect.set_facecolor(b_colors[i])
 
+    plt.tight_layout()
     plt.show(block=False)

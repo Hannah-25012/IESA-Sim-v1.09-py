@@ -31,7 +31,7 @@ def graph_priceDuration(activities, font_name, font_size, color_code):
         iAk = act.elec_idx
 
         # Graph creation section
-        plt.figure()
+        plt.figure(figsize=(8, 6))
         lines = plt.plot(np.arange(1, nH + 1), price_duration[:, :, iAk] * 3.6, linewidth=2) # Plot each column of price_duration for the given activity and multiply by 3.6
         y_lbl = f"{act.name} - price duration in €/MWh"
         plt.ylabel(y_lbl, fontname=font_name, fontsize=font_size)
@@ -55,4 +55,5 @@ def graph_priceDuration(activities, font_name, font_size, color_code):
         for iP in range(nP):
             lines[iP].set_color(color_code[color_order[iP] - 1]) # Subtract 1 from color_order value to convert MATLAB 1-indexing to Python's 0-indexing
 
+        plt.tight_layout()
         plt.show(block=False)

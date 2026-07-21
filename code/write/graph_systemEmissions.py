@@ -22,11 +22,12 @@ def graph_systemEmissions(activities, technologies, results, font_name, font_siz
     emission_target = np.sum(tech_stock_max[coord_tech, :], axis=0)
 
     # Creating the graph
-    plt.figure()
+    plt.figure(figsize=(9, 6))
     plt.plot(periods, emissions, 'k', linewidth=2)
     plt.plot(periods[2:], emission_target[2:], '--r', linewidth=2)
     plt.plot(years, realized_emissions, ':b', linewidth=2)
     plt.ylabel('system emisisons [Mton CO_2/y]', fontname=font_name, fontsize=font_size)
     plt.legend(['modeled emissions', 'target emissions', 'historical emissions'], prop={'family': font_name, 'size': 12})
 
+    plt.tight_layout()
     plt.show(block=False)

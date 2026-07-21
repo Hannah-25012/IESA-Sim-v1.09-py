@@ -21,7 +21,9 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
     lbl.append('Total')
 
     # Creating the graph
-    _ , ax = plt.subplots()
+    # Sized wider/taller than the 6.4x4.8 default so the 3-column legend
+    # doesn't get clipped by the figure edge.
+    _ , ax = plt.subplots(figsize=(9, 6))
 
     # Plot stacked positive bars
     stack_bottom = np.zeros_like(periods, dtype=float)
@@ -84,4 +86,5 @@ def graph_policyCashflows(types, activities, results, font_name, font_size, colo
             patch.set_facecolor(color_code[6, :])
 
     # Show the plot
+    plt.tight_layout()
     plt.show(block=False)

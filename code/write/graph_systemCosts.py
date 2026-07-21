@@ -23,7 +23,7 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
     lbl = ordered_label
 
     # Creating the graph
-    plt.figure()
+    plt.figure(figsize=(9, 6))
 
     # Plot positive bars with stacking
     a = []
@@ -50,7 +50,15 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
         b.append(container)
 
     plt.ylabel('system costs [B€/y]', fontname=font_name, fontsize=font_size)
-    plt.ylim([-150, 250])
+
+    # Fixed [-150, 250] limits (MATLAB-era default) clipped the stacked bars/line
+    # whenever a period's costs ran higher/lower than that - size to the actual
+    # data instead, with a 10% margin so nothing touches the axes edge.
+    line_vals = np.sum(system_costs, axis=0) / 1000
+    top = max(np.sum(y1, axis=1).max() / 1000, line_vals.max())
+    bottom = min(np.sum(y2, axis=1).min() / 1000, line_vals.min())
+    margin = 0.1 * (top - bottom)
+    plt.ylim(bottom - margin, top + margin)
 
     # Formatting section
     ax = plt.gca()
@@ -71,4 +79,5 @@ def graph_systemCosts(activities, results, font_name, font_size, color_code):
         for patch in container.patches:
             patch.set_facecolor(color_code[mapping[i]])
 
+    plt.tight_layout()
     plt.show(block=False)
