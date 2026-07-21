@@ -49,6 +49,7 @@ if _code_dir not in sys.path:
     sys.path.insert(0, _code_dir)
 
 from main import main as run_simulation  # noqa: E402  (path setup must run first)
+from mod0_read_data_save_duck import mod0_read_data_save_duck  # noqa: E402
 
 app = FastAPI()
 app.add_middleware(
@@ -168,6 +169,71 @@ async def upload_input(file: UploadFile = File(...)):
         f.write(await file.read())
 
     return {"file_name": filename}
+
+
+# Excel -> DuckDB conversion only, no solve. Separate from /run's job dict
+# (different shape: no scenario_name/output dir) and from /input (which just
+# saves bytes for /run to read later) — this is for the unified-project
+# gateway's own compare/unify wizard, which needs a DuckDB out of a raw IESA-
+# Sim workbook without paying for a full simulation.
+_CONVERT_DIR = "converted"
+_convert_jobs: dict[str, dict[str, Any]] = {}
+
+
+def _convert_job(job_id: str, xlsx_path: str, db_path: str) -> None:
+    _convert_jobs[job_id]["status"] = "running"
+    try:
+        mod0_read_data_save_duck(xlsx_path, db_path)
+        _convert_jobs[job_id].update(status="done", outputPath=db_path, error=None)
+    except Exception as e:  # noqa: BLE001 - surface any parse failure as a job error instead of crashing the worker
+        _convert_jobs[job_id].update(status="error", error=f"{type(e).__name__}: {e}")
+
+
+@app.post("/convert")
+async def convert(file: UploadFile = File(...)):
+    filename = os.path.basename(file.filename or "")
+    if not filename.lower().endswith((".xlsx", ".xlsm", ".xls")):
+        raise HTTPException(400, "Input file must be an Excel workbook (.xlsx/.xlsm/.xls)")
+
+    os.makedirs(_CONVERT_DIR, exist_ok=True)
+    job_id = str(uuid.uuid4())
+    xlsx_path = os.path.join(_CONVERT_DIR, f"{job_id}_{filename}")
+    with open(xlsx_path, "wb") as f:
+        f.write(await file.read())
+
+    db_path = os.path.join(_CONVERT_DIR, f"{job_id}.duckdb")
+    _convert_jobs[job_id] = {"status": "pending", "outputPath": None, "error": None}
+    _executor.submit(_convert_job, job_id, xlsx_path, db_path)
+    return {"job_id": job_id}
+
+
+@app.get("/convert/{job_id}")
+def convert_status(job_id: str):
+    job = _convert_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"No conversion job with id {job_id!r}")
+    return job
+
+
+@app.get("/convert/{job_id}/download")
+def convert_download(job_id: str):
+    job = _convert_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"No conversion job with id {job_id!r}")
+    if job["status"] != "done":
+        raise HTTPException(400, f"Job is {job['status']!r}, not done yet")
+
+    db_path = job["outputPath"]
+
+    def iter_file():
+        with open(db_path, "rb") as f:
+            yield from f
+
+    return StreamingResponse(
+        iter_file(),
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="sim.duckdb"'},
+    )
 
 
 _DOWNLOAD_FILES = ["simulation_excel.duckdb", "simulation_results.pkl"]
