@@ -47,9 +47,6 @@ def disp_power_shedding(shed_guarantee, shed_maxvolume_hourly,
         # Get the flexible target
         flex_target = shed_guarantee[iS] - shed_minvolume_hourly[:, iS].sum()
 
-        # Order the hours of preference
-        prices_order = np.argsort(prices_vector, axis=0).flatten()
-
         # Identify which hours satisfy the guarantee constraint
         cumsum_volume = np.cumsum(flex_volume[prices_order])
         last_on = np.searchsorted(cumsum_volume, flex_target, side='left')

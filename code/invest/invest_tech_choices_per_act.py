@@ -44,9 +44,22 @@ def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP
         coord_tech = np.array([t.idx for t in competitors], dtype=int)
         nT = len(competitors)
 
-        # Identify population vector of agent types based on the activity's agent profile
+        # Identify population vector of agent types based on the activity's agent profile.
+        # Activities with no agent_profile (an OPT-only concept carried through a merged
+        # database - see mod0_load_duckdb._load_activities - for commodities, emitted-GHG
+        # bookkeeping, etc. that IESA-Opt has no agent-based investment data for) have no
+        # population split to weight by. `.get` returning None used to reach numpy here as
+        # a bare `agents_populations[None, :]`, which numpy silently reinterprets as
+        # np.newaxis instead of raising - producing a 2D slice several calls downstream
+        # (invest_tech_choices_per_act's own tech_choices_inter[coord_max] assignment)
+        # instead of a clear error at the source. Split evenly across agent types instead,
+        # so the (still-rational, per-type multicriteria) choice below doesn't misattribute
+        # the whole population to one specific agent type in exported per-type breakdowns.
         agent_idx = agent_idx_by_name.get(activity.agent_profile_name)
-        population_vector = agents_populations[agent_idx, :]
+        if agent_idx is not None:
+            population_vector = agents_populations[agent_idx, :]
+        else:
+            population_vector = np.full(nAT, 1.0 / nAT)
 
         if nT == 0:
             print(f"--****There is no main technology for activity: {activity.name}")

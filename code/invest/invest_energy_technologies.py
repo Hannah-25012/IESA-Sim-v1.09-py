@@ -141,6 +141,17 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
             # Identify possible technologies
             tech_coord = np.array([t.idx for t in activity.technologies], dtype=int)
 
+            # An activity can have an energy gap but no technology at all to fill it
+            # (e.g. an IESA-Sim-side activity name with no matching IESA-Opt-side
+            # technology after a merged-database load - see dbcompare-backend's
+            # /unify - such as "Natural Gas"/"Hydrogen" vs. the technology-bearing
+            # "Natural Gas HD"/"Natural Gas LD" naming) - skip it like the analogous
+            # nT == 0 case in invest_tech_choices_per_act.py, instead of crashing on
+            # np.max of an empty array.
+            if tech_coord.size == 0:
+                print(f"--****There is no technology to cover the energy gap for activity: {activity.name}")
+                continue
+
             # Preferences of thoses technologies
             options_preferences = tech_preference[tech_coord]
             max_value = np.max(options_preferences)

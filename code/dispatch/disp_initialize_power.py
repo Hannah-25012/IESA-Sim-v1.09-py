@@ -41,7 +41,17 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     )
     tech_shedding_coord = np.array((shedding_capacity > 0) & (tech_stock > 0), dtype=bool)
     tech_loadshifts_coord = np.logical_and(np.array(flexibility_form) == 'DR shifting', tech_stock > 0)
-    tech_batteries_coord = np.logical_and(np.array(flexibility_form) == 'Storage', tech_stock > 0)
+    # flexibility_form == 'Storage' also covers non-electricity storage (e.g. heat
+    # network storage like "Heat LT Network") - restrict to technologies whose own
+    # activity is actually electricity (elec_idx is not None), matching elec_activities
+    # above, so a non-electricity storage tech that only gains stock in a later period
+    # (stock_initial == 0 until then) doesn't get treated as a power-dispatch battery
+    # once tech_stock > 0 - see bat_elec_idx below, which assumes every "battery" here
+    # has a real position in activities.electricity.names.
+    tech_elec_coord = np.array([t.activity.elec_idx is not None for t in tech_entities])
+    tech_batteries_coord = np.logical_and.reduce([
+        np.array(flexibility_form) == 'Storage', tech_stock > 0, tech_elec_coord
+    ])
     tech_interconnectors_coord = np.array(tech_subsector) == 'XC Trade'
     nG = np.sum(tech_generators_coord)
 
