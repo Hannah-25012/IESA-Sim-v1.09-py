@@ -175,8 +175,21 @@ def _load_technologies(con, periods, activities_names):
         "flexibility_losses", "flexibility_nonnegotiable", "buffer_up", "buffer_down", "buffer_capacity",
         "stock_deploy", "stock_initial",
     ]
+    # wacc only exists on a merged/unified database (dbcompare-backend's
+    # /unify carries IESA-Opt's own per-technology wacc through; a native
+    # Sim-built database - mod0_read_data_save_duck - has no such column,
+    # since IESA-Sim historically prices all technologies via their agent's
+    # discount rate instead - see mod1_initialize's annuity factor loop).
+    tech_table_cols = {r[0] for r in con.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'technologies'"
+    ).fetchall()}
+    has_wacc = "wacc" in tech_table_cols
+    if has_wacc:
+        tech_cols.append("wacc")
     quoted = ", ".join(f'"{c}"' for c in tech_cols)
     tech_df = con.execute(f'SELECT {quoted} FROM technologies ORDER BY seq').fetchdf()
+    if not has_wacc:
+        tech_df["wacc"] = np.nan
     tech_balancers = tech_df["id"].tolist()
 
     # Positionally aligned with tech_balancers (None where a tech has no flex
@@ -225,6 +238,7 @@ def _load_technologies(con, periods, activities_names):
         costs=Struct(
             investments=inv_cost, foms=fom_cost, voms=vom_cost,
             lifetimes=tech_df["lifetime"].to_numpy(dtype=float),
+            wacc=tech_df["wacc"].to_numpy(dtype=float),
         ),
         cap2acts=tech_df["cap2act"].to_numpy(dtype=float),
         dispatch=tech_df["dispatch_type"].tolist(),
@@ -294,7 +308,20 @@ def _load_technologies(con, periods, activities_names):
         stocks=Struct(initial=infra_df["stock_initial"].to_numpy(dtype=float)),
     )
 
+    # Same period-repetition as energy_balance above (see
+    # dbcompare-backend/app.py's _IESA_OPT_SIM_SHARED_TABLES entry for
+    # retrofittings) - collapse to one row per (from_tech, to_tech), erroring
+    # if the repeats ever actually disagree on cost.
     retro_df = con.execute("SELECT from_tech, to_tech, cost FROM retrofittings").fetchdf()
+    retro_conflicts = retro_df.groupby(["from_tech", "to_tech"])["cost"].nunique()
+    retro_conflicts = retro_conflicts[retro_conflicts > 1]
+    if not retro_conflicts.empty:
+        raise ValueError(
+            "retrofittings has period-varying costs for "
+            f"{len(retro_conflicts)} (from_tech, to_tech) pair(s) that IESA-Sim "
+            f"cannot represent (no period dimension), e.g. {retro_conflicts.index[0]}"
+        )
+    retro_df = retro_df.drop_duplicates(subset=["from_tech", "to_tech"])
     retrofittings = Struct(**{
         "to": retro_df["to_tech"].tolist(),
         "from": retro_df["from_tech"].tolist(),

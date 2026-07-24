@@ -18,6 +18,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     tech_categories = technologies.balancers.categories
     ec_lifetime = technologies.balancers.costs.lifetimes
     activity_per_tech = technologies.balancers.activities
+    tech_wacc = technologies.balancers.costs.wacc
     vom_cost = technologies.balancers.costs.voms
     vom_cost_init = vom_cost[:, 0]
     flexibility_range = technologies.balancers.flexibility.range
@@ -79,14 +80,39 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
 
     # === Calculate annuity factors ===
     print('--Calculating annuity factors')
+    # Technologies that came from IESA-Opt (via a merged/unified database -
+    # see mod0_load_duckdb._load_technologies) have no agent_profile on their
+    # activity, since agent-based discounting is an IESA-Sim-only concept -
+    # IESA-Opt carries its own per-technology wacc instead, so fall back to
+    # that. A handful have neither (no agent, no wacc - e.g. Passenger Cars,
+    # CO2 Air n-ETS) - for those, fall back to the median wacc of technologies
+    # in the same category, since no per-technology financial data exists at
+    # all for them.
+    category_wacc = {}
+    for cat in set(tech_categories):
+        cat_wacc = tech_wacc[np.array(tech_categories) == cat]
+        cat_wacc = cat_wacc[~np.isnan(cat_wacc)]
+        if cat_wacc.size:
+            category_wacc[cat] = np.median(cat_wacc)
+
     annuity_fact = np.zeros(nTb)
     annuity_fact_infra = np.zeros(nTi)
     for iTb in range(nTb):
         n = ec_lifetime[iTb]
         tech_activity = activity_per_tech[iTb]
         agent_tech = activity_agent[activity_names.index(tech_activity)]
-        coord_agent = agent_profiles.index(agent_tech)
-        r = agents_dr[coord_agent]
+        if agent_tech is not None:
+            r = agents_dr[agent_profiles.index(agent_tech)]
+        elif not np.isnan(tech_wacc[iTb]):
+            r = tech_wacc[iTb]
+        elif tech_categories[iTb] in category_wacc:
+            r = category_wacc[tech_categories[iTb]]
+        else:
+            raise ValueError(
+                f"Technology {tech_balancers[iTb]!r} has no agent_profile, no wacc, "
+                f"and no other {tech_categories[iTb]!r}-category technology with a wacc "
+                "to fall back to - cannot determine a discount rate for its annuity factor."
+            )
         annuity_fact[iTb] = r / (1 - (1 + r) ** -n)
     for iTi in range(nTi):
         n = ec_lifetime_infra[iTi]
