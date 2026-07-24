@@ -20,6 +20,18 @@ endpoints are fine for a backend with its own domain shape):
                                 for the GUI's "save results" action (only once done;
                                 simulation_state.duckdb, the multi-GB raw solver state,
                                 is deliberately left out of this bundle)
+  POST /checkFile           -> multipart file upload (.xlsx/.duckdb) -> a fast,
+                                non-destructive shape probe (see code/read/compat_check.py),
+                                not a full parse - for the unified-project gateway's
+                                own compare/unify wizard to badge a dropped file
+                                without paying for a real conversion
+  GET  /run/{job_id}/graph/{name} -> one of the PNGs listed in the job's
+                                meta.graphs, for the GUI to render inline
+                                (the model itself only ever saves these to
+                                disk now - see code/write/graph_*.py - so this
+                                is the only way to see them; nothing pops up
+                                as an on-screen window anymore, headless
+                                container or not)
 
 Only one simulation runs at a time (single-worker executor) - the model
 mutates a handful of on-disk files (SIMmodel.duckdb, output/<scenario>/...)
@@ -28,6 +40,7 @@ that aren't safe to write to concurrently from two runs.
 import io
 import os
 import sys
+import tempfile
 import time
 import uuid
 import zipfile
@@ -41,15 +54,16 @@ matplotlib.use("Agg")  # headless container: no display to show interactive figu
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 _code_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "code")
 if _code_dir not in sys.path:
     sys.path.insert(0, _code_dir)
 
-from main import main as run_simulation  # noqa: E402  (path setup must run first)
+from main import main as run_simulation  # noqa: E402  (path setup must run first; also puts code/read/ on sys.path)
 from mod0_read_data_save_duck import mod0_read_data_save_duck  # noqa: E402
+from compat_check import check_sim_compatibility  # noqa: E402
 
 app = FastAPI()
 app.add_middleware(
@@ -132,6 +146,13 @@ def _summarize_output(scenario_name: str) -> dict:
         con.close()
 
 
+def _list_graphs(scenario_name: str) -> list[str]:
+    graphs_dir = Path("output") / scenario_name / "graphs"
+    if not graphs_dir.is_dir():
+        return []
+    return sorted(p.name for p in graphs_dir.glob("*.png"))
+
+
 def _run_job(job_id: str, settings: dict) -> None:
     _jobs[job_id]["status"] = "running"
     started = time.perf_counter()
@@ -146,6 +167,7 @@ def _run_job(job_id: str, settings: dict) -> None:
                 "scenario_name": settings["scenario_name"],
                 "year_end": settings["year_end"],
                 "duration_seconds": round(time.perf_counter() - started, 1),
+                "graphs": _list_graphs(settings["scenario_name"]),
             },
         )
     except Exception as e:  # noqa: BLE001 - surface any failure to the job status instead of crashing the worker
@@ -207,6 +229,22 @@ async def convert(file: UploadFile = File(...)):
     return {"job_id": job_id}
 
 
+@app.post("/checkFile")
+async def check_file(file: UploadFile = File(...)):
+    filename = os.path.basename(file.filename or "")
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in (".xlsx", ".xlsm", ".xls", ".duckdb", ".db"):
+        raise HTTPException(400, f"Unsupported file type {ext!r} for compatibility check")
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(await file.read())
+        tmp_path = tmp.name
+    try:
+        return check_sim_compatibility(tmp_path)
+    finally:
+        os.remove(tmp_path)
+
+
 @app.get("/convert/{job_id}")
 def convert_status(job_id: str):
     job = _convert_jobs.get(job_id)
@@ -264,6 +302,24 @@ def download_results(job_id: str):
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
     )
+
+
+@app.get("/run/{job_id}/graph/{name}")
+def get_graph(job_id: str, name: str):
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(404, f"No job with id {job_id!r}")
+    if job["status"] != "done":
+        raise HTTPException(400, f"Job is {job['status']!r}, not done yet")
+
+    # name must be exactly one of the filenames the job itself reported -
+    # rules out path traversal (../, absolute paths) without needing to
+    # separately sanitize the string.
+    if name not in job["meta"]["graphs"]:
+        raise HTTPException(404, f"No graph named {name!r} for this job")
+
+    path = Path("output") / job["meta"]["scenario_name"] / "graphs" / name
+    return FileResponse(path, media_type="image/png")
 
 
 @app.post("/run")
