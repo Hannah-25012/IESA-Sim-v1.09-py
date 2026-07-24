@@ -21,7 +21,18 @@ def _pivot(df, row_col, row_order, col_col, col_order, value_col):
 
 
 def _load_parameters(con):
-    values = dict(con.execute("SELECT Name, Value FROM parameters").fetchall())
+    # Value comes back as a Python float from a native Sim-built database
+    # (Value column is DOUBLE - see mod0_read_data_save_duck), but as text
+    # from a merged/unified database (the unify step matches IESA-Opt's own
+    # "parameters" table, whose Value column is VARCHAR, and that table also
+    # carries IESA-Opt's own non-numeric rows like scenario_description) -
+    # cast just the 12 names IESA-Sim itself needs, so downstream arithmetic
+    # (investment thresholds, cost comparisons) gets a float either way
+    # instead of failing on `float >= str`.
+    raw = dict(con.execute("SELECT Name, Value FROM parameters").fetchall())
+    names = ("SPBT_benchmark", "SPBT_min", "CR_threshold", "CR_min", "NUF_threshold", "NUF_min",
+             "penalization", "gas_premium", "voll", "min_spread", "gov_dr", "exports_value")
+    values = {name: float(raw[name]) for name in names}
     return Struct(
         powinv=Struct(
             SPBT_benchmark=values["SPBT_benchmark"],
@@ -92,12 +103,28 @@ def _load_agents(con):
 def _load_activities(con):
     periods = [r[0] for r in con.execute("SELECT period FROM periods ORDER BY period_order").fetchall()]
 
-    volume_cols = [f'"volumes_{p}"' for p in periods]
-    cols = ['"Name"', '"activity_resolution"', '"activity_type"', '"energy_label"', '"agent_profile"'] + volume_cols
+    # A native Sim-built database (mod0_read_data_save_duck) puts volumes
+    # directly on "activities" as wide volumes_<year> columns; a merged/
+    # unified database (dbcompare-backend's /unify) doesn't - to reconcile
+    # with IESA-Opt's own long-shaped table, volumes live in a separate
+    # "activity_volumes" (activity_name, period, value) table instead.
+    # Detect which shape this database actually has rather than assuming.
+    activities_cols = {r[0] for r in con.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'activities'"
+    ).fetchall()}
+    has_wide_volumes = all(f"volumes_{p}" in activities_cols for p in periods)
+
+    cols = ['"Name"', '"activity_resolution"', '"activity_type"', '"energy_label"', '"agent_profile"']
+    if has_wide_volumes:
+        cols += [f'"volumes_{p}"' for p in periods]
     df = con.execute(f'SELECT {", ".join(cols)} FROM activities ORDER BY seq').fetchdf()
 
     names = df["Name"].tolist()
-    volumes = df[[f"volumes_{p}" for p in periods]].fillna(0).to_numpy(dtype=float)
+    if has_wide_volumes:
+        volumes = df[[f"volumes_{p}" for p in periods]].fillna(0).to_numpy(dtype=float)
+    else:
+        av_df = con.execute("SELECT activity_name, period, value FROM activity_volumes").fetchdf()
+        volumes = _pivot(av_df, "activity_name", names, "period", periods, "value")
 
     activities = Struct(
         names=names,
@@ -169,7 +196,22 @@ def _load_technologies(con, periods, activities_names):
     tech_stock_min = _pivot(stocks_df, "tech_id", tech_balancers, "period", periods, "min")
     tech_stock_max = _pivot(stocks_df, "tech_id", tech_balancers, "period", periods, "max")
 
+    # A merged/unified database's energy_balance table can legitimately repeat
+    # the same (tech_id, activity_name) key once per period (see
+    # dbcompare-backend/app.py's _IESA_OPT_SIM_SHARED_TABLES entry for this
+    # table) - IESA-Sim has no period dimension for these coefficients, so
+    # collapse to one row per key, but verify the repeats actually agree
+    # rather than silently picking one if a real conflict ever shows up.
     eb_df = con.execute("SELECT tech_id, activity_name, value FROM energy_balance").fetchdf()
+    value_counts = eb_df.groupby(["tech_id", "activity_name"])["value"].nunique()
+    conflicts = value_counts[value_counts > 1]
+    if not conflicts.empty:
+        raise ValueError(
+            "energy_balance has period-varying values for "
+            f"{len(conflicts)} (tech_id, activity_name) pair(s) that IESA-Sim "
+            f"cannot represent (no period dimension), e.g. {conflicts.index[0]}"
+        )
+    eb_df = eb_df.drop_duplicates(subset=["tech_id", "activity_name"])
     activity_balances = _pivot(eb_df, "tech_id", tech_balancers, "activity_name", activities_names, "value")
 
     balancers = Struct(
@@ -192,8 +234,12 @@ def _load_technologies(con, periods, activities_names):
             complexity=tech_df["perceived_complexity"].tolist(),
         ),
         policies=Struct(
-            subsidy_subject=tech_df["subsidy_subject"].to_numpy(dtype=bool),
-            feedin_subject=tech_df["feedin_subject"].to_numpy(dtype=bool),
+            # NULL for technologies that came from IESA-Opt (see
+            # dbcompare-backend/app.py's technologies entry - these two
+            # columns are IESA-Sim-only concepts with no IESA-Opt
+            # counterpart) - treat as not subsidy/feedin-subject.
+            subsidy_subject=tech_df["subsidy_subject"].fillna(False).to_numpy(dtype=bool),
+            feedin_subject=tech_df["feedin_subject"].fillna(False).to_numpy(dtype=bool),
         ),
         shedding=Struct(
             capacity=tech_df["shedding_capacity"].to_numpy(dtype=float),

@@ -193,6 +193,31 @@ async def upload_input(file: UploadFile = File(...)):
     return {"file_name": filename}
 
 
+# Lets the unified-project gateway's own compare/unify wizard run IESA-Sim
+# directly against the database it just merged, the same way /convert lets it
+# skip a full simulation to just get a DuckDB - here the caller already has a
+# full database (Sim's own output, IESA-Opt's, or a merged one) and only
+# wants /run to load it (db_path, read_input=false), not re-derive it from
+# Excel. Separate from /input (which only ever takes the raw .xlsx workbook
+# main.py itself would read) since the destination path and downstream use
+# differ.
+_UPLOADED_DB_DIR = "uploaded_dbs"
+
+
+@app.post("/input_db")
+async def upload_input_db(file: UploadFile = File(...)):
+    filename = os.path.basename(file.filename or "")
+    if not filename.lower().endswith((".duckdb", ".db")):
+        raise HTTPException(400, "Input file must be a .duckdb database")
+
+    os.makedirs(_UPLOADED_DB_DIR, exist_ok=True)
+    dest = os.path.join(_UPLOADED_DB_DIR, f"{uuid.uuid4()}_{filename}")
+    with open(dest, "wb") as f:
+        f.write(await file.read())
+
+    return {"db_path": dest}
+
+
 # Excel -> DuckDB conversion only, no solve. Separate from /run's job dict
 # (different shape: no scenario_name/output dir) and from /input (which just
 # saves bytes for /run to read later) — this is for the unified-project
