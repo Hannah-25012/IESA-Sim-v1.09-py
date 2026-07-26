@@ -20,6 +20,41 @@ def _pivot(df, row_col, row_order, col_col, col_order, value_col):
     return pivot.to_numpy()
 
 
+def _pivot_carry(df, row_col, row_order, col_col, col_order, value_col):
+    """Like _pivot, but a missing (row, col) combination inherits that same
+    row's nearest earlier col_order entry (falling back to the nearest later
+    one for a leading gap) instead of being zeroed.
+
+    A native Sim-built database always has one technology_stocks/
+    technology_costs/infrastructure_costs row per (tech, period) - every
+    period is fully populated, so plain fillna(0) never actually fires. A
+    merged/unified database (dbcompare-backend's /unify) can be far sparser:
+    IESA-Opt itself only carries a partial "current status" snapshot for a
+    near-term checkpoint year Sim never modeled (verified: a real merge had
+    266 of 666 technologies - concrete existing power plants like "Electricity
+    from CCGT old - Power BE" - with zero technology_stocks/technology_costs
+    rows at period 2022 even though the same plants have real capacity at
+    2020 and 2025). IESA-Opt.jl's own reader treats a missing (tech, period)
+    key as "no constraint recorded" (see IESAOPT's input_tables.jl: a missing
+    techStock_max entry means the @constraint for that (t, period) is never
+    added at all) - capacity just carries over from whatever the surrounding
+    periods/investment decisions already determine.  IESA-Sim's dense
+    per-period arrays have no way to express "no constraint", but zeroing
+    min/max/investment/fom/vom is the one value guaranteed to be wrong: a
+    zeroed max clamps existing stock down to 0 in invest_techstocks_def.py
+    (`min(max(tech_stock_min, tech_stock), tech_stock_max)`), forcibly
+    decommissioning a still-operating plant for that single period, and a
+    zeroed investment cost makes that period's (non-)investment look free.
+    Carrying the nearest real value forward (back for a leading gap) is the
+    closest a fixed-grid model can get to IESA-Opt's "unconstrained" reading
+    without inventing a number IESA-Opt never actually provided.
+    """
+    pivot = df.pivot(index=row_col, columns=col_col, values=value_col)
+    pivot = pivot.reindex(index=row_order, columns=col_order)
+    pivot = pivot.ffill(axis=1).bfill(axis=1).fillna(0)
+    return pivot.to_numpy()
+
+
 def _load_parameters(con):
     # Value comes back as a Python float from a native Sim-built database
     # (Value column is DOUBLE - see mod0_read_data_save_duck), but as text
@@ -123,8 +158,15 @@ def _load_activities(con):
     if has_wide_volumes:
         volumes = df[[f"volumes_{p}" for p in periods]].fillna(0).to_numpy(dtype=float)
     else:
+        # A merged/unified database's activity_volumes can be missing an
+        # activity's row for a period IESA-Opt only partially populated
+        # (same root cause as technology_stocks/technology_costs above - see
+        # _pivot_carry's docstring) - zero-filling that gap would make an
+        # activity's demand vanish for one period even though it has real
+        # volume on both sides of the gap, so carry the nearest known volume
+        # forward/back instead of assuming 0.
         av_df = con.execute("SELECT activity_name, period, value FROM activity_volumes").fetchdf()
-        volumes = _pivot(av_df, "activity_name", names, "period", periods, "value")
+        volumes = _pivot_carry(av_df, "activity_name", names, "period", periods, "value")
 
     activities = Struct(
         names=names,
@@ -200,14 +242,14 @@ def _load_technologies(con, periods, activities_names):
     flexibility_activity = [flex_act_map.get(t) for t in tech_balancers]
 
     costs_df = con.execute("SELECT tech_id, period, investment, fom, vom FROM technology_costs").fetchdf()
-    inv_cost = _pivot(costs_df, "tech_id", tech_balancers, "period", periods, "investment")
-    fom_cost = _pivot(costs_df, "tech_id", tech_balancers, "period", periods, "fom")
-    vom_cost = _pivot(costs_df, "tech_id", tech_balancers, "period", periods, "vom")
+    inv_cost = _pivot_carry(costs_df, "tech_id", tech_balancers, "period", periods, "investment")
+    fom_cost = _pivot_carry(costs_df, "tech_id", tech_balancers, "period", periods, "fom")
+    vom_cost = _pivot_carry(costs_df, "tech_id", tech_balancers, "period", periods, "vom")
 
     stocks_df = con.execute("SELECT tech_id, period, dec_planned, min, max FROM technology_stocks").fetchdf()
     tech_stock_dec = _pivot(stocks_df, "tech_id", tech_balancers, "period", periods, "dec_planned")
-    tech_stock_min = _pivot(stocks_df, "tech_id", tech_balancers, "period", periods, "min")
-    tech_stock_max = _pivot(stocks_df, "tech_id", tech_balancers, "period", periods, "max")
+    tech_stock_min = _pivot_carry(stocks_df, "tech_id", tech_balancers, "period", periods, "min")
+    tech_stock_max = _pivot_carry(stocks_df, "tech_id", tech_balancers, "period", periods, "max")
 
     # A merged/unified database's energy_balance table can legitimately repeat
     # the same (tech_id, activity_name) key once per period (see
@@ -291,8 +333,8 @@ def _load_technologies(con, periods, activities_names):
     tech_infra = infra_df["id"].tolist()
 
     infra_costs_df = con.execute("SELECT infra_id, period, investment, fom FROM infrastructure_costs").fetchdf()
-    inv_cost_infra = _pivot(infra_costs_df, "infra_id", tech_infra, "period", periods, "investment")
-    fom_cost_infra = _pivot(infra_costs_df, "infra_id", tech_infra, "period", periods, "fom")
+    inv_cost_infra = _pivot_carry(infra_costs_df, "infra_id", tech_infra, "period", periods, "investment")
+    fom_cost_infra = _pivot_carry(infra_costs_df, "infra_id", tech_infra, "period", periods, "fom")
 
     infra = Struct(
         ids=tech_infra,
