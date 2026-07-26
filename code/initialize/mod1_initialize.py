@@ -135,6 +135,17 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     nAc = len(activities_emission)
     initialized_emission_prices = np.zeros(nAc)
     for iAc, emission_activity in enumerate(activities_emission):
+        # An 'Emission'-type activity with no technology backing it at all
+        # (activity_per_tech never contains it) is a real, if unusual,
+        # dataset shape - a merged/unified database can declare more
+        # emission activities than it has abatement technologies for, and
+        # the investment logic elsewhere already tolerates this same gap
+        # (prints "There is no main technology for activity: ..." and moves
+        # on) rather than treating it as fatal. Leave this one at its
+        # zero-initialized default instead of crashing on .index().
+        if emission_activity not in activity_per_tech:
+            print(f"--**No technology is associated with the emission activity: {emission_activity}")
+            continue
         coord_tech = activity_per_tech.index(emission_activity)
         initialized_emission_prices[iAc] = np.max(vom_cost_init[coord_tech])
 

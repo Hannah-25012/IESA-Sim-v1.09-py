@@ -34,7 +34,14 @@ def initialize_prices(activities, tech_categories, activity_label, activity_per_
         # Handle emission-related activities
         if activity_names[iA] in activities_emission:
             coord_tech = [activity_per_tech[j] == activity_names[iA] for j in range(len(activity_per_tech))]
-            initialized_prices[iA, :] = np.max(vom_cost[coord_tech, :], axis=0)
+            # An 'Emission'-type activity with no backing technology at all
+            # (same gap mod1_initialize's own emission-price init already
+            # tolerates - see its "No technology is associated with..."
+            # warning) has nothing to np.max over; leave this activity's
+            # price at its zero-initialized default instead of reducing an
+            # empty array.
+            if any(coord_tech):
+                initialized_prices[iA, :] = np.max(vom_cost[coord_tech, :], axis=0)
 
         # Adjust for taxes
         coord_taxes_act = [activity_names[iA] == tax_act for tax_act in taxes_activities]
