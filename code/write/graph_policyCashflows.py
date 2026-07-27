@@ -1,90 +1,53 @@
 # Function to graph policy cashflows
-# CHECK: Are positive and neg part really needed? Go over all graphing routines again
+import os
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plot_colors import rgb
 
-def graph_policyCashflows(types, activities, results, font_name, font_size, color_code):
+def graph_policyCashflows(types, activities, results, font_name, font_size, color_code, graphs_dir):
 
     # Extract parameters
     policy_cashflows_categories = types.policy_cashflows_categories
     periods = activities.periods
     policy_cashflows = results.policy_cashflows / 1000.0
 
-    # Preparing the graph
-    policy_cashflows_pos = np.copy(policy_cashflows)
-    policy_cashflows_neg = np.copy(policy_cashflows)
-    policy_cashflows_pos[policy_cashflows < 0] = 0
-    policy_cashflows_neg[policy_cashflows > 0] = 0
-    y1 = policy_cashflows_pos
-    y2 = policy_cashflows_neg
     lbl = list(policy_cashflows_categories)
-    lbl.append('Total')
+    num_categories = policy_cashflows.shape[0]
 
-    # Creating the graph
-    # Sized wider/taller than the 6.4x4.8 default so the 3-column legend
-    # doesn't get clipped by the figure edge.
-    _ , ax = plt.subplots(figsize=(9, 6))
+    # Only the first 4 categories (EUA, Taxes, Feed-In subsidies, Investment
+    # subsidies) get an explicit color, matching the matplotlib version's own
+    # "if len(bars) >= 4" coloring section - any category beyond that keeps
+    # Plotly's default color cycle instead of erroring.
+    category_colors = [11, 15, 5, 6]
 
-    # Plot stacked positive bars
-    stack_bottom = np.zeros_like(periods, dtype=float)
-    bars_a = []
-    for i in range(y1.shape[0]): # Assuming y1 is a 2D array with shape (num_categories, num_periods)
-        bar_container = ax.bar(periods, y1[i, :], bottom=stack_bottom, edgecolor='none')
-        stack_bottom += y1[i, :]
-        bars_a.append(bar_container)
-    total_line = np.sum(y1, axis=0) + np.sum(y2, axis=0) # Plot total line over positive bars
-    ax.plot(periods, total_line, 'k-', linewidth=2)
+    total_line = np.sum(policy_cashflows, axis=0)
 
-    # Plot stacked negative bars
-    stack_bottom_neg = np.zeros_like(periods, dtype=float)
-    bars_b = []
-    for i in range(y2.shape[0]):
-        bar_container = ax.bar(periods, y2[i, :], bottom=stack_bottom_neg, edgecolor='none')
-        stack_bottom_neg += y2[i, :]
-        bars_b.append(bar_container)
-    ax.plot(periods, total_line, 'k-', linewidth=2) # Plot total line over negative bars
-    ax.set_ylabel('policy cashflows [B€]', fontname=font_name, fontsize=font_size)
-    ax.set_ylim([-100, 100])
-    ax.set_yticks(np.arange(-100, 101, 20)) # Matlab displays the graph in 20-steps
+    # Creating the graph. barmode='relative' stacks each period's positive
+    # categories upward from 0 and negative ones downward from 0
+    # independently, replacing the matplotlib version's hand-split y1/y2.
+    fig = go.Figure()
+    for i in range(num_categories):
+        color = rgb(color_code, category_colors[i]) if i < len(category_colors) else None
+        fig.add_trace(go.Bar(
+            x=list(periods), y=policy_cashflows[i, :], name=lbl[i],
+            marker_color=color,
+        ))
 
-    # Formatting section
-    ax.yaxis.grid(True)
-    ax.set_xticks(periods)
-    ax.set_xticklabels(periods, fontname=font_name, fontsize=font_size)
-    plt.xticks(rotation=0)
-    ax.set_xlim([2015, 2055])
-    # Update x and y tick label font properties
-    for label in ax.get_xticklabels():
-        label.set_fontname(font_name)
-        label.set_fontsize(font_size)
-    for label in ax.get_yticklabels():
-        label.set_fontname(font_name)
-        label.set_fontsize(font_size)
-    if True:
-        ax.legend(lbl, prop={'family': font_name, 'size': 12}, ncol=3)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    fig.add_trace(go.Scatter(
+        x=list(periods), y=list(total_line),
+        mode='lines', name='Total', line=dict(color='black', width=2),
+    ))
 
-    # Coloring section
-    if len(bars_a) >= 4:
-        for patch in bars_a[0]:
-            patch.set_facecolor(color_code[11, :])
-        for patch in bars_a[1]:
-            patch.set_facecolor(color_code[15, :])
-        for patch in bars_a[2]:
-            patch.set_facecolor(color_code[5, :])
-        for patch in bars_a[3]:
-            patch.set_facecolor(color_code[6, :])
-    if len(bars_b) >= 4:
-        for patch in bars_b[0]:
-            patch.set_facecolor(color_code[11, :])
-        for patch in bars_b[1]:
-            patch.set_facecolor(color_code[15, :])
-        for patch in bars_b[2]:
-            patch.set_facecolor(color_code[5, :])
-        for patch in bars_b[3]:
-            patch.set_facecolor(color_code[6, :])
+    fig.update_layout(
+        barmode='relative',
+        template='plotly_white',
+        font=dict(family=font_name, size=font_size),
+        yaxis_title='policy cashflows [B€]',
+        yaxis=dict(range=[-100, 100], tick0=-100, dtick=20),
+        xaxis=dict(tickmode='array', tickvals=list(periods), range=[2015, 2055]),
+        legend=dict(orientation='h', yanchor='top', y=-0.15, xanchor='center', x=0.5),
+        margin=dict(t=30),
+    )
+    fig.update_yaxes(gridcolor='#e0e0e0', zerolinecolor='#bbb')
 
-    # Show the plot
-    plt.tight_layout()
-    plt.show(block=False)
+    fig.write_html(os.path.join(graphs_dir, 'policy_cashflows.html'), include_plotlyjs='cdn')

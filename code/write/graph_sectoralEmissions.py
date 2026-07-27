@@ -1,9 +1,10 @@
 # Function to graph sectoral emissions
-# CHECK: Have to go over all of the graphing functions
+import os
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plot_colors import rgb
 
-def graph_sectoralEmissions(activities, types, results, font_name, font_size, color_code):
+def graph_sectoralEmissions(activities, types, results, font_name, font_size, color_code, graphs_dir):
 
     # Extract parameters
     periods = activities.periods
@@ -42,74 +43,52 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
 
     # Append emissions_stored to y1
     y1 = np.vstack([y1, emissions_stored])
-    lbl = ordered_labels.copy()
-    lbl.append('Stored CO_2')
-    lbl.append('Total Emissions')
-    lbl.append('Total CO_2')
 
-    # Creating the graph (plot y1 and y2 as stacked bars)
-    # y1
-    # Sized wider/taller than the 6.4x4.8 default so the 4-column, up-to-16-entry
-    # legend doesn't get clipped by the figure edge.
-    _ , ax = plt.subplots(figsize=(10, 7))
-    bars_a = []
-    bottom = np.zeros_like(periods, dtype=float)
+    # Coloring section - same per-sector color on both the positive and
+    # negative stack (b_colors is a_colors minus its last "Stored CO2" entry,
+    # which has no negative-side counterpart at all).
+    a_colors = [11, 9, 5, 2, 0, 10, 12, 1, 7, 14, 15, 4, 3, 8]
+    b_colors = a_colors[:13]
+
+    # Creating the graph. Each sector gets one legend entry from its positive
+    # trace; the negative-side trace for the same sector reuses that color
+    # but is hidden from the legend (showlegend=False) instead of showing up
+    # a second time under the same name - matches the matplotlib version's
+    # own legend, which (by how many artists vs. label-list entries it had)
+    # only ever showed one entry per sector too.
+    fig = go.Figure()
     for i in range(y1.shape[0]):
-        bar_container = ax.bar(periods, y1[i, :], bottom=bottom, edgecolor='none')
-        bars_a.append(bar_container)
-        bottom = bottom + y1[i, :]
-
-    ax.plot(periods, np.sum(y1, axis=0) + np.sum(y2, axis=0) - emissions_stored, 'k', linewidth=2) # Plot the two lines
-    ax.plot(periods, np.sum(y1, axis=0) + np.sum(y2, axis=0), '--k', linewidth=2)
-
-   # y2
-    bars_b = []
-    bottom = np.zeros_like(periods, dtype=float)
+        name = 'Stored CO_2' if i == len(ordered_labels) else ordered_labels[i]
+        fig.add_trace(go.Bar(
+            x=list(periods), y=y1[i, :], name=name,
+            marker_color=rgb(color_code, a_colors[i]),
+            marker_opacity=0.5 if i == len(ordered_labels) else 1.0,
+        ))
     for i in range(y2.shape[0]):
-        bar_container = ax.bar(periods, y2[i, :], bottom=bottom, edgecolor='none')
-        bars_b.append(bar_container)
-        bottom = bottom + y2[i, :]
+        fig.add_trace(go.Bar(
+            x=list(periods), y=y2[i, :], name=ordered_labels[i],
+            marker_color=rgb(color_code, b_colors[i]), showlegend=False,
+        ))
 
-    ax.set_ylabel('sectoral emissions [Mton/y]', fontname=font_name, fontsize=font_size)
-    ax.set_ylim([-100, 200])
+    fig.add_trace(go.Scatter(
+        x=list(periods), y=list(np.sum(y1, axis=0) + np.sum(y2, axis=0) - emissions_stored),
+        mode='lines', name='Total Emissions', line=dict(color='black', width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=list(periods), y=list(np.sum(y1, axis=0) + np.sum(y2, axis=0)),
+        mode='lines', name='Total CO_2', line=dict(color='black', width=2, dash='dash'),
+    ))
 
-    # Formatting section
-    ax.yaxis.grid(True)
-    ax.set_xticks(periods)
-    ax.set_xticklabels(periods, fontname=font_name, fontsize=font_size)
-    plt.xticks(rotation=0)
-    ax.set_xlim([2015, 2055])
-    for label in ax.get_xticklabels():
-        label.set_fontname(font_name)
-        label.set_fontsize(font_size)
-    for label in ax.get_yticklabels():
-        label.set_fontname(font_name)
-        label.set_fontsize(font_size)
-    if True:
-        ax.legend(lbl, prop={'family': font_name, 'size': 12}, ncol=4)
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    fig.update_layout(
+        barmode='relative',
+        template='plotly_white',
+        font=dict(family=font_name, size=font_size),
+        yaxis_title='sectoral emissions [Mton/y]',
+        yaxis_range=[-100, 200],
+        xaxis=dict(tickmode='array', tickvals=list(periods), range=[2015, 2055]),
+        legend=dict(orientation='h', yanchor='top', y=-0.15, xanchor='center', x=0.5),
+        margin=dict(t=30),
+    )
+    fig.update_yaxes(gridcolor='#e0e0e0', zerolinecolor='#bbb')
 
-    # Coloring section
-    # For bars_a (y1)
-    a_colors = [color_code[11], color_code[9], color_code[5], color_code[2],
-                color_code[0], color_code[10], color_code[12], color_code[1],
-                color_code[7], color_code[14], color_code[15], color_code[4],
-                color_code[3], color_code[8]]
-    for i, bar_container in enumerate(bars_a):
-        for rect in bar_container:
-            rect.set_facecolor(a_colors[i])
-            if i == 13:  # the 14th element, set alpha to 0.5
-                rect.set_alpha(0.5)
-
-    # For bars_b (y2)
-    b_colors = [color_code[11], color_code[9], color_code[5], color_code[2],
-                color_code[0], color_code[10], color_code[12], color_code[1],
-                color_code[7], color_code[14], color_code[15], color_code[4],
-                color_code[3]]
-    for i, bar_container in enumerate(bars_b):
-        for rect in bar_container:
-            rect.set_facecolor(b_colors[i])
-
-    plt.tight_layout()
-    plt.show(block=False)
+    fig.write_html(os.path.join(graphs_dir, 'sectoral_emissions.html'), include_plotlyjs='cdn')

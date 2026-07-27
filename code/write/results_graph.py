@@ -1,4 +1,5 @@
 # Function to call the different graphing routines of the model
+import os
 from graph_primaryEnergy import graph_primaryEnergy
 from graph_systemEmissions import graph_systemEmissions
 from graph_systemCosts import graph_systemCosts
@@ -6,20 +7,20 @@ from graph_sectoralEmissions import graph_sectoralEmissions
 from graph_policyCashflows import graph_policyCashflows
 from graph_priceDuration import graph_priceDuration
 import numpy as np
-import matplotlib as mpl
 
-def results_graph(dimensions, types, activities, technologies, results, plot_price_duration):
+def results_graph(dimensions, types, activities, technologies, results, plot_price_duration, output_path):
+
+    # Graphs are saved as interactive Plotly HTML files rather than shown
+    # interactively, so this doesn't pop up a window on screen - a GUI (or
+    # anything else) can read them back from here once the run is done.
+    graphs_dir = os.path.join(output_path, 'graphs')
+    os.makedirs(graphs_dir, exist_ok=True)
 
     # === Unify the format and colors ===
     # Plot format
     font_name = 'DejaVu Sans'
     font_size = 12
-    
-    mpl.rcParams.update({
-        'font.family': font_name,
-        'font.size': font_size,
-    })
-    
+
     # Color code
     color_code = np.zeros((18, 3))
     color_code[0, :] = [0.0, 0.0, 0.0]   # Black
@@ -44,25 +45,25 @@ def results_graph(dimensions, types, activities, technologies, results, plot_pri
     # === Call the different graphing routines ===
     # Graph the primary energy balance
     print("--Graphing the primary energy balance...")
-    graph_primaryEnergy(dimensions, types, activities, results, font_name, font_size, color_code)
+    graph_primaryEnergy(dimensions, types, activities, results, font_name, font_size, color_code, graphs_dir)
 
     # Graph the total emissions
     print("--Graphing the system GHG emissions...")
-    graph_systemEmissions(activities, technologies, results, font_name, font_size)
+    graph_systemEmissions(activities, technologies, results, font_name, font_size, graphs_dir)
 
     # Graph the system costs
     print("--Graphing the system costs...")
-    graph_systemCosts(activities, results, font_name, font_size, color_code)
+    graph_systemCosts(activities, results, font_name, font_size, color_code, graphs_dir)
 
     # Graph the sectoral emissions
     print("--Graphing the sectoral emissions...")
-    graph_sectoralEmissions(activities, types, results, font_name, font_size, color_code)
+    graph_sectoralEmissions(activities, types, results, font_name, font_size, color_code, graphs_dir)
 
     # Graph the policy cashflows
     print("--Graphing the policy cashflows")
-    graph_policyCashflows(types, activities, results, font_name, font_size, color_code)
+    graph_policyCashflows(types, activities, results, font_name, font_size, color_code, graphs_dir)
 
     # Graph the power price duration curves if requested
     if plot_price_duration:
         print("--Graphing the price duration curves...")
-        graph_priceDuration(activities, font_name, font_size, color_code)
+        graph_priceDuration(activities, font_name, font_size, color_code, graphs_dir)

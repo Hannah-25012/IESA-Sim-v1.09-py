@@ -30,13 +30,13 @@ endpoints are fine for a backend with its own domain shape):
                                 not a full parse - for the unified-project gateway's
                                 own compare/unify wizard to badge a dropped file
                                 without paying for a real conversion
-  GET  /run/{job_id}/graph/{name} -> one of the PNGs listed in the job's
-                                meta.graphs, for the GUI to render inline
-                                (the model itself only ever saves these to
-                                disk now - see code/write/graph_*.py - so this
-                                is the only way to see them; nothing pops up
-                                as an on-screen window anymore, headless
-                                container or not)
+  GET  /run/{job_id}/graph/{name} -> one of the interactive Plotly HTML
+                                charts listed in the job's meta.graphs, for
+                                the GUI to embed inline (via <iframe> - see
+                                code/write/graph_*.py, which write these
+                                straight to disk instead of popping up an
+                                on-screen window; this is the only way to
+                                see them)
 
 Only one simulation runs at a time (single-worker executor) - the model
 mutates a handful of on-disk files (SIMmodel.duckdb, output/<scenario>/...)
@@ -54,8 +54,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import duckdb
-import matplotlib
-matplotlib.use("Agg")  # headless container: no display to show interactive figures on
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -181,7 +179,7 @@ def _list_graphs(scenario_name: str) -> list[str]:
     graphs_dir = Path("output") / scenario_name / "graphs"
     if not graphs_dir.is_dir():
         return []
-    return sorted(p.name for p in graphs_dir.glob("*.png"))
+    return sorted(p.name for p in graphs_dir.glob("*.html"))
 
 
 def _run_job(job_id: str, settings: dict) -> None:
@@ -381,7 +379,7 @@ def get_graph(job_id: str, name: str):
         raise HTTPException(404, f"No graph named {name!r} for this job")
 
     path = Path("output") / job["meta"]["scenario_name"] / "graphs" / name
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="text/html")
 
 
 @app.post("/run")

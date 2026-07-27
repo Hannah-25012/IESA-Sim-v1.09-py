@@ -1,9 +1,9 @@
 # Function to graph the evolution of system emissions
-# CHECK: Have to go over all graphing functions
+import os
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 
-def graph_systemEmissions(activities, technologies, results, font_name, font_size):
+def graph_systemEmissions(activities, technologies, results, font_name, font_size, graphs_dir):
 
     # Extract parameters
     periods = activities.periods
@@ -21,13 +21,20 @@ def graph_systemEmissions(activities, technologies, results, font_name, font_siz
     coord_tech = [tech.idx for tech in target_techs]
     emission_target = np.sum(tech_stock_max[coord_tech, :], axis=0)
 
-    # Creating the graph
-    plt.figure(figsize=(9, 6))
-    plt.plot(periods, emissions, 'k', linewidth=2)
-    plt.plot(periods[2:], emission_target[2:], '--r', linewidth=2)
-    plt.plot(years, realized_emissions, ':b', linewidth=2)
-    plt.ylabel('system emisisons [Mton CO_2/y]', fontname=font_name, fontsize=font_size)
-    plt.legend(['modeled emissions', 'target emissions', 'historical emissions'], prop={'family': font_name, 'size': 12})
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=list(periods), y=list(emissions), mode='lines',
+                              name='modeled emissions', line=dict(color='black', width=2)))
+    fig.add_trace(go.Scatter(x=list(periods[2:]), y=list(emission_target[2:]), mode='lines',
+                              name='target emissions', line=dict(color='red', width=2, dash='dash')))
+    fig.add_trace(go.Scatter(x=list(years), y=realized_emissions, mode='lines',
+                              name='historical emissions', line=dict(color='blue', width=2, dash='dot')))
 
-    plt.tight_layout()
-    plt.show(block=False)
+    fig.update_layout(
+        template='plotly_white',
+        font=dict(family=font_name, size=font_size),
+        yaxis_title='system emisisons [Mton CO_2/y]',
+        margin=dict(t=30),
+    )
+    fig.update_yaxes(gridcolor='#e0e0e0')
+
+    fig.write_html(os.path.join(graphs_dir, 'system_emissions.html'), include_plotlyjs='cdn')

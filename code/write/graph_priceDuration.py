@@ -1,9 +1,11 @@
 # File to plot the price duration curves
-# CHECK: Have to go over all graphing routines again
+import os
+import re
 import numpy as np
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plot_colors import rgb
 
-def graph_priceDuration(activities, font_name, font_size, color_code):
+def graph_priceDuration(activities, font_name, font_size, color_code, graphs_dir):
 
     # Extract parameters
     periods = activities.periods
@@ -21,39 +23,38 @@ def graph_priceDuration(activities, font_name, font_size, color_code):
             price_duration[:, iP, iAk] = np.sort(prices_hourly[:, iAk, iP]) # Sort each column in ascending order
 
     # For each activity prepare a new plot with the evolution of the price duration curve
+    x = np.arange(1, nH + 1)
     x_ticks = np.linspace(0, nH, num=11)  # creates ticks: 0, n_h/10, ..., n_h
     x_ticks_lbls = list(range(0, 101, 10))
     lbl = [str(p) for p in periods]
     max_price = 300
-    color_order = [16, 12, 11, 9, 18, 6, 7]  # Note: color_order values are 1-indexed in MATLAB; here we subtract 1 when indexing color_code.
+    color_order = [16, 12, 11, 9, 18, 6, 7]  # Note: values are 1-indexed in MATLAB; here we subtract 1 when indexing color_code.
 
     for act in elec_activities:
         iAk = act.elec_idx
 
-        # Graph creation section
-        plt.figure(figsize=(8, 6))
-        lines = plt.plot(np.arange(1, nH + 1), price_duration[:, :, iAk] * 3.6, linewidth=2) # Plot each column of price_duration for the given activity and multiply by 3.6
-        y_lbl = f"{act.name} - price duration in €/MWh"
-        plt.ylabel(y_lbl, fontname=font_name, fontsize=font_size)
-        plt.xlabel('time duration in %', fontname=font_name, fontsize=font_size)
-
-        # Formatting section
-        ax = plt.gca()
-        ax.yaxis.grid(True)
-        plt.xticks(x_ticks, x_ticks_lbls, rotation=0, fontname=font_name, fontsize=font_size)
-        plt.xlim(0, nH)
-        plt.ylim(0, max_price)
-        xticks_labels = [item.get_text() for item in ax.get_xticklabels()] # Reapply tick labels with the desired font settings
-        yticks_labels = [item.get_text() for item in ax.get_yticklabels()]
-        ax.set_xticklabels(xticks_labels, fontname=font_name, fontsize=font_size)
-        ax.set_yticklabels(yticks_labels, fontname=font_name, fontsize=font_size)
-        plt.legend(lbl, prop={'family': font_name, 'size': 12}, loc='best')
-        ax.spines['top'].set_visible(False) # Remove top and right spines to mimic Matlab 'box off'
-        ax.spines['right'].set_visible(False)
-
-        # Coloring section
+        fig = go.Figure()
         for iP in range(nP):
-            lines[iP].set_color(color_code[color_order[iP] - 1]) # Subtract 1 from color_order value to convert MATLAB 1-indexing to Python's 0-indexing
+            # color_order only has 7 entries (pre-existing from the matplotlib
+            # version, which would IndexError identically on an 8+ period run -
+            # this graph is opt-in and off by default, so it was never
+            # exercised for real) - wrap around instead of assuming nP <= 7.
+            fig.add_trace(go.Scatter(
+                x=list(x), y=list(price_duration[:, iP, iAk] * 3.6),
+                mode='lines', name=lbl[iP],
+                line=dict(color=rgb(color_code, color_order[iP % len(color_order)] - 1), width=2),
+            ))
 
-        plt.tight_layout()
-        plt.show(block=False)
+        fig.update_layout(
+            template='plotly_white',
+            font=dict(family=font_name, size=font_size),
+            yaxis_title=f"{act.name} - price duration in €/MWh",
+            xaxis_title='time duration in %',
+            xaxis=dict(tickmode='array', tickvals=list(x_ticks), ticktext=[str(v) for v in x_ticks_lbls], range=[0, nH]),
+            yaxis_range=[0, max_price],
+            margin=dict(t=30),
+        )
+        fig.update_yaxes(gridcolor='#e0e0e0')
+
+        safe_name = re.sub(r'[^A-Za-z0-9_-]+', '_', act.name).strip('_')
+        fig.write_html(os.path.join(graphs_dir, f'price_duration_{safe_name}.html'), include_plotlyjs='cdn')
