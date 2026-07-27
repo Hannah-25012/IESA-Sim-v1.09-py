@@ -15,7 +15,12 @@ endpoints are fine for a backend with its own domain shape):
                                 background run and returns immediately
   GET  /run/{job_id}        -> {"status": "pending"|"running"|"done"|"error",
                                 "output": {...} | null, "meta": {...} | null,
-                                "error": "..." | null}
+                                "error": "..." | null, "logs": ["...", ...]}
+                                - logs is every line main.py has print()'d so
+                                far (grows during "running"), so the GUI can
+                                show the same progress the console already
+                                gets instead of just a bare status word
+                                across the whole 10+ minute run
   GET  /run/{job_id}/download -> zip of simulation_excel.duckdb + simulation_results.pkl
                                 for the GUI's "save results" action (only once done;
                                 simulation_state.duckdb, the multi-GB raw solver state,
@@ -75,6 +80,32 @@ app.add_middleware(
 
 _executor = ThreadPoolExecutor(max_workers=1)
 _jobs: dict[str, dict[str, Any]] = {}
+
+
+class _TeeCapture:
+    """Mirrors every write to `real_stream` (so the container's own console/
+    `docker logs` still sees everything main.py print()s, unchanged) while
+    also line-buffering it into `job["logs"]`, so a GUI polling GET /run/{id}
+    mid-run sees the same progress the console already got instead of just
+    a bare "running" status for the whole 10+ minute run. sys.stdout/stderr
+    are process-global, not per-thread, but _executor's single worker means
+    only one job's run_simulation() is ever mid-flight at a time - no risk of
+    two runs' output interleaving into the wrong job's log."""
+
+    def __init__(self, real_stream, job: dict):
+        self._real = real_stream
+        self._job = job
+        self._buf = ""
+
+    def write(self, s):
+        self._real.write(s)
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._job["logs"].append(line)
+
+    def flush(self):
+        self._real.flush()
 
 # Same shape/defaults as settings/IESA_settings_v1.10.json - callers only
 # need to override the fields they care about.
@@ -154,11 +185,15 @@ def _list_graphs(scenario_name: str) -> list[str]:
 
 
 def _run_job(job_id: str, settings: dict) -> None:
-    _jobs[job_id]["status"] = "running"
+    job = _jobs[job_id]
+    job["status"] = "running"
     started = time.perf_counter()
+    real_stdout, real_stderr = sys.stdout, sys.stderr
+    sys.stdout = _TeeCapture(real_stdout, job)
+    sys.stderr = _TeeCapture(real_stderr, job)
     try:
         run_simulation(settings)
-        _jobs[job_id].update(
+        job.update(
             status="done",
             output=_summarize_output(settings["scenario_name"]),
             meta={
@@ -171,7 +206,9 @@ def _run_job(job_id: str, settings: dict) -> None:
             },
         )
     except Exception as e:  # noqa: BLE001 - surface any failure to the job status instead of crashing the worker
-        _jobs[job_id].update(status="error", error=f"{type(e).__name__}: {e}")
+        job.update(status="error", error=f"{type(e).__name__}: {e}")
+    finally:
+        sys.stdout, sys.stderr = real_stdout, real_stderr
 
 
 @app.get("/health")
@@ -351,7 +388,7 @@ def get_graph(job_id: str, name: str):
 def run(req: RunRequest):
     settings = _build_settings(req.input)
     job_id = str(uuid.uuid4())
-    _jobs[job_id] = {"status": "pending", "output": None, "meta": None, "error": None}
+    _jobs[job_id] = {"status": "pending", "output": None, "meta": None, "error": None, "logs": []}
     _executor.submit(_run_job, job_id, settings)
     return {"job_id": job_id}
 
