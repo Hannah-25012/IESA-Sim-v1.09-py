@@ -47,6 +47,11 @@ endpoints are fine for a backend with its own domain shape):
   GET  /outputs/{scenario_name}/results -> same shape as a job's own "output"
   GET  /outputs/{scenario_name}/graph/{name} -> same as the job-scoped graph
                                 route above, keyed by scenario name instead
+  GET  /outputs/{scenario_name}/download -> same as /run/{job_id}/download,
+                                keyed by scenario name instead - the GUI's
+                                "save results" needs this too once results
+                                came from /outputs (loaded, no live job_id)
+                                rather than a just-finished run
 
 Only one simulation runs at a time (single-worker executor) - the model
 mutates a handful of on-disk files (SIMmodel.duckdb, output/<scenario>/...)
@@ -376,6 +381,18 @@ def convert_download(job_id: str):
 _DOWNLOAD_FILES = ["simulation_excel.duckdb", "simulation_results.pkl"]
 
 
+def _zip_results(scenario_name: str) -> io.BytesIO:
+    out_dir = Path("output") / scenario_name
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for name in _DOWNLOAD_FILES:
+            path = out_dir / name
+            if path.exists():
+                zf.write(path, arcname=name)
+    buf.seek(0)
+    return buf
+
+
 @app.get("/run/{job_id}/download")
 def download_results(job_id: str):
     job = _jobs.get(job_id)
@@ -385,19 +402,24 @@ def download_results(job_id: str):
         raise HTTPException(400, f"Job is {job['status']!r}, not done yet")
 
     scenario_name = job["meta"]["scenario_name"]
-    out_dir = Path("output") / scenario_name
+    zip_name = f"{scenario_name}_results.zip"
+    return StreamingResponse(
+        _zip_results(scenario_name),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
-        for name in _DOWNLOAD_FILES:
-            path = out_dir / name
-            if path.exists():
-                zf.write(path, arcname=name)
-    buf.seek(0)
+
+@app.get("/outputs/{scenario_name}/download")
+def download_output(scenario_name: str):
+    # Same membership check as the other /outputs/{scenario_name} routes -
+    # rules out path traversal without needing to separately sanitize.
+    if not any(s["scenario_name"] == scenario_name for s in _list_output_scenarios()):
+        raise HTTPException(404, f"No saved output named {scenario_name!r}")
 
     zip_name = f"{scenario_name}_results.zip"
     return StreamingResponse(
-        buf,
+        _zip_results(scenario_name),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
     )
