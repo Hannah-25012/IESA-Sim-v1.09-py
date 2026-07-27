@@ -37,6 +37,16 @@ endpoints are fine for a backend with its own domain shape):
                                 straight to disk instead of popping up an
                                 on-screen window; this is the only way to
                                 see them)
+  GET  /outputs             -> [{"scenario_name", "graphs", "modified"}, ...]
+                                for every output/<scenario> directory that has
+                                saved graphs, newest first - lets the GUI
+                                offer "load a previous run" without needing
+                                the in-memory job that produced it (jobs -
+                                and their job_id - don't survive a container
+                                restart, but the saved output/ files do)
+  GET  /outputs/{scenario_name}/results -> same shape as a job's own "output"
+  GET  /outputs/{scenario_name}/graph/{name} -> same as the job-scoped graph
+                                route above, keyed by scenario name instead
 
 Only one simulation runs at a time (single-worker executor) - the model
 mutates a handful of on-disk files (SIMmodel.duckdb, output/<scenario>/...)
@@ -50,6 +60,7 @@ import time
 import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
@@ -180,6 +191,34 @@ def _list_graphs(scenario_name: str) -> list[str]:
     if not graphs_dir.is_dir():
         return []
     return sorted(p.name for p in graphs_dir.glob("*.html"))
+
+
+def _list_output_scenarios() -> list[dict]:
+    """Every output/<scenario> directory that actually has saved graphs - the
+    same on-disk source of truth a job's own /run/{job_id} results already
+    read from, but keyed by scenario name directly instead of a job id, so a
+    past run's results/graphs stay browsable even after the in-memory job
+    that produced them is gone (a container restart wipes _jobs entirely;
+    the output/ files on disk don't move). Computed fresh on every call
+    rather than cached, so a run that just finished shows up immediately."""
+    root = Path("output")
+    if not root.is_dir():
+        return []
+    scenarios = []
+    for d in sorted(root.iterdir()):
+        if not d.is_dir():
+            continue
+        graphs = _list_graphs(d.name)
+        if not graphs:
+            continue
+        mtime = max((d / "graphs" / g).stat().st_mtime for g in graphs)
+        scenarios.append({
+            "scenario_name": d.name,
+            "graphs": graphs,
+            "modified": datetime.fromtimestamp(mtime).isoformat(timespec="seconds"),
+        })
+    scenarios.sort(key=lambda s: s["modified"], reverse=True)
+    return scenarios
 
 
 def _run_job(job_id: str, settings: dict) -> None:
@@ -379,6 +418,33 @@ def get_graph(job_id: str, name: str):
         raise HTTPException(404, f"No graph named {name!r} for this job")
 
     path = Path("output") / job["meta"]["scenario_name"] / "graphs" / name
+    return FileResponse(path, media_type="text/html")
+
+
+@app.get("/outputs")
+def list_outputs():
+    return {"outputs": _list_output_scenarios()}
+
+
+@app.get("/outputs/{scenario_name}/results")
+def output_results(scenario_name: str):
+    if not any(s["scenario_name"] == scenario_name for s in _list_output_scenarios()):
+        raise HTTPException(404, f"No saved output named {scenario_name!r}")
+    return _summarize_output(scenario_name)
+
+
+@app.get("/outputs/{scenario_name}/graph/{name}")
+def output_graph(scenario_name: str, name: str):
+    match = next((s for s in _list_output_scenarios() if s["scenario_name"] == scenario_name), None)
+    if match is None:
+        raise HTTPException(404, f"No saved output named {scenario_name!r}")
+    # name must be exactly one of the filenames this scenario actually has -
+    # rules out path traversal (../, absolute paths) without needing to
+    # separately sanitize the string.
+    if name not in match["graphs"]:
+        raise HTTPException(404, f"No graph named {name!r} for {scenario_name!r}")
+
+    path = Path("output") / scenario_name / "graphs" / name
     return FileResponse(path, media_type="text/html")
 
 
