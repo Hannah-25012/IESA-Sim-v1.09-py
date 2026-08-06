@@ -101,12 +101,16 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
                     vom_adjusted -= feedin_effect
 
         # Adjust for taxes (emissions only)
-        # Identify activities being used
-        activity_balance_coord = np.where((technology_balance < 0) & iAc)[0]
+        # Identify activities being used. Emission-type balances are stored
+        # POSITIVE for emitters (IESA-Opt convention, see energy_balance /
+        # activity_balances) - the sign here and the leading minus below are
+        # the mirror image of the pre-flip `< 0` selector + unsigned product,
+        # chosen so taxes_effect (and thus vom_adjusted) is unchanged.
+        activity_balance_coord = np.where((technology_balance > 0) & iAc)[0]
         for iA_fuel in activity_balance_coord:
             fuel_activity = activities.entities[iA_fuel]
             if fuel_activity.name in taxes_idx_by_name:
-                taxes_effect = taxes_values[taxes_idx_by_name[fuel_activity.name], iP] * technology_balance[iA_fuel]
+                taxes_effect = -taxes_values[taxes_idx_by_name[fuel_activity.name], iP] * technology_balance[iA_fuel]
                 vom_adjusted -= taxes_effect
 
         # Clean fuel consumption for cogeneration cases
@@ -126,7 +130,9 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
         fom = (fom_cost[iTb] / tech.cap2act).item()
         vom = (cogen_share * vom_adjusted).item()
         fuels = (cogen_share * np.sum(fuel_consumption * used_energy_prices)).item()
-        emissions = (-cogen_share * np.sum(technology_balance[iAc] * emission_prices)).item()
+        # No leading minus: technology_balance[iAc] is now positive-for-emitters
+        # (IESA-Opt convention), so the raw product already carries the right sign.
+        emissions = (cogen_share * np.sum(technology_balance[iAc] * emission_prices)).item()
 
         # Save the LCOPs
         tech_lcops_matrix[iTb, :] = [inv, fom, vom, fuels, emissions]

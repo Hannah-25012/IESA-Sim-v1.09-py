@@ -22,6 +22,10 @@ def disp_energy_balance(dimensions, activities, technologies, profiles, tech_use
     # Each hourly profile type's shape, resolved once instead of re-scanning
     # profile_type for every technology that uses it.
     profile_shape_by_type = {name: hourly_profiles[:, i] for i, name in enumerate(profile_type)}
+    # Emission-type activities are now stored positive-for-emitters (IESA-Opt
+    # convention) rather than negative, which flips activity_gap's sign below
+    # for those columns only - see the un-negate right after it's computed.
+    coord_emission_act = np.array([a.is_emission for a in activities.entities])
 
     # Iterate in a loop
     tech_use = np.sum(tech_use_hourly, axis=0)
@@ -35,6 +39,8 @@ def disp_energy_balance(dimensions, activities, technologies, profiles, tech_use
                 # Identify the remaining gap
                 act_balance = tech_use[:, None] * activity_balances
                 activity_gap = activities_net_volumes[iA] - np.sum(act_balance[:, iA])
+                if coord_emission_act[iA]:
+                    activity_gap = -activity_gap
 
                 # Calculate the remaining use space of technologies
                 tech_use_max = tech_stock * cap2act

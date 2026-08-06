@@ -34,6 +34,11 @@ def results_policy_cashflows(dimensions, parameters, types, activities, technolo
     eua_activity = activity_by_name['CO2 Air ETS']
     coord_national_ets = np.array([tech.subsector == 'National ETS' for tech in tech_entities])
     tech_eua_balance = activity_balances[:, eua_activity.idx].copy() # Select the column corresponding to 'CO2 Air ETS'
+    # 'CO2 Air ETS' is an emission-type activity, now stored positive-for-
+    # emitters (IESA-Opt convention) - negate this local copy back to the old
+    # (negative-for-emitters) convention so eua_balance/eua_cashflow below
+    # come out numerically identical to before.
+    tech_eua_balance = -tech_eua_balance
     tech_eua_balance[coord_national_ets] = 0 # Set to zero those technologies that are of 'National ETS'
     eua_balance = np.sum(tech_use * tech_eua_balance[:, None], axis=0) # Broadcast the balance to all periods and multiply elementwise with tech use then sum across technologies
 
@@ -50,8 +55,14 @@ def results_policy_cashflows(dimensions, parameters, types, activities, technolo
         if act.name in taxes_idx_by_name:
             tax_index = taxes_idx_by_name[act.name]
 
-            # Check how much of it is being consumed
+            # Check how much of it is being consumed. Emission-type columns
+            # are now stored positive-for-emitters (IESA-Opt convention) -
+            # negate this local copy back to the old (negative-for-emitters)
+            # convention first so the "keep only negative" clip below still
+            # selects the same technologies/amounts as before.
             tech_act_balance = activity_balances[:, act.idx].copy()
+            if act.is_emission:
+                tech_act_balance = -tech_act_balance
             tech_act_balance[tech_act_balance > 0] = 0
             act_balance = np.sum(tech_use * (tech_act_balance.reshape(-1, 1) @ np.ones((1, nP))), axis=0)
 

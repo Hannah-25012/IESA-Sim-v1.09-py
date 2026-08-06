@@ -17,6 +17,11 @@ def post_generator_indicators(dimensions, activities, technologies, profiles, iP
     # profileType for every technology.
     profile_idx_by_type = {name: i for i, name in enumerate(profileType)}
     flat_hourly_profiles = hourly_profiles.flatten(order='F') # Flatten the array to mimic MATLAB's column-major (Fortran-style) linear indexing. Note: NumPy uses row-major order by default, so you need to use 'F' order if you want exact MATLAB behavior.
+    # Emission-type activities are now stored positive-for-emitters (IESA-Opt
+    # convention) - used below to un-negate just those entries of the balance
+    # vector fed into cash_flow_vector, which feeds invest_power_technologies.py's
+    # payback-time investment decision and must stay numerically identical.
+    coord_emission_act = np.array([a.is_emission for a in activities.entities])
 
     # Obtain the normalized utilization factors using price and availability shapes
     generator_NormUtFact = np.zeros(nTb) # Preallocate
@@ -41,8 +46,12 @@ def post_generator_indicators(dimensions, activities, technologies, profiles, iP
             frac = techUse_hourly[:, iTb] / denom
         generator_NormUtFact[iTb] = np.mean(frac)
 
-        # Compute the cash flow
-        cash_flow_vector = prices_hourly @ tech.activity_balances
+        # Compute the cash flow. tech.activity_balances is a VIEW into the
+        # shared activity_balances matrix (see entities.py) - copy before
+        # negating so this doesn't mutate the real array.
+        balance_for_cashflow = tech.activity_balances.copy()
+        balance_for_cashflow[coord_emission_act] = -balance_for_cashflow[coord_emission_act]
+        cash_flow_vector = prices_hourly @ balance_for_cashflow
         generator_CashFlow[iTb] = np.sum(techUse_hourly[:, iTb] * cash_flow_vector)
 
         # Compute generator revenues for the selected activity

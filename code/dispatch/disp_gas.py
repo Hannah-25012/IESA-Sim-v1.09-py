@@ -14,7 +14,17 @@ def disp_gas(dimensions, parameters, activities, technologies, profiles, policie
     activities_names = activities.names
     gaseous_activities = [a for a in activities.entities if a.is_gaseous]
     dispatchType_tech = technologies.balancers.dispatch
-    activity_balances = technologies.balancers.activity_balances
+    # Emission-type activities are now stored positive-for-emitters (IESA-Opt
+    # convention). 'CO2 CCUS Network' is emission-type AND daily-resolution
+    # (is_gaseous), so it is itself one of the activities this whole function
+    # dispatches/prices, not just a bystander column - restore the old
+    # (negative-for-emitters) convention on this local copy once, up front,
+    # so every use of activity_balances below (both when an emission activity
+    # is the one being priced, and when its column is swept in as "some other
+    # activity" via coord_noact) matches the old behavior.
+    activity_balances = technologies.balancers.activity_balances.copy()
+    coord_emission_act = np.array([a.is_emission for a in activities.entities])
+    activity_balances[:, coord_emission_act] = -activity_balances[:, coord_emission_act]
     tech_stock = technologies.balancers.stocks.evolution[:, iP]
     cap2act = technologies.balancers.cap2acts
     vom_cost = technologies.balancers.costs.voms[:, iP]
@@ -172,18 +182,33 @@ def disp_gas(dimensions, parameters, activities, technologies, profiles, policie
             # Buffer requirements
             buffer_upward_peak = np.max(daily_balance)
             buffer_downward_peak = np.min(daily_balance)
-            buffer_days = np.max(daily_cummulative) / buffer_downward_peak
+            # A gaseous activity whose daily balance never dips below zero
+            # (no drawdown at all this period) has no downward peak to size
+            # a buffer against - buffer_days would be x/0. Nothing below
+            # needs a real buffer_days value for that case (buffers_shares
+            # ends up 0 for every buffer, which correctly drives both
+            # buffers_installations_* to 0 further down), so 0 is a safe,
+            # inert stand-in rather than propagating inf/NaN through the
+            # whole buffer-sizing chain.
+            buffer_days = np.max(daily_cummulative) / buffer_downward_peak if buffer_downward_peak != 0 else 0.0
 
             # Buffer shares
             buffers_up = buffer_up[coord_buffer]
             buffers_down = buffer_down[coord_buffer]
             buffers_capacities = buffer_capacity[coord_buffer]
-            buffers_shares = 1 - np.abs(buffers_capacities / buffer_days - 1)
-            buffers_shares = buffers_shares / np.sum(buffers_shares)
+            buffers_shares = 1 - np.abs(buffers_capacities / buffer_days - 1) if buffer_days != 0 else np.zeros_like(buffers_capacities)
+            shares_sum = np.sum(buffers_shares)
+            buffers_shares = buffers_shares / shares_sum if shares_sum != 0 else buffers_shares
 
             # Buffer installations
-            buffers_installations_up = buffer_upward_peak / np.sum(buffers_up * buffers_shares)
-            buffers_installations_down = buffer_downward_peak / np.sum(buffers_down * buffers_shares)
+            up_weight = np.sum(buffers_up * buffers_shares)
+            down_weight = np.sum(buffers_down * buffers_shares)
+            # No buffer technology actually carries any share of the peak
+            # (e.g. buffer_days == 0 above, or every buffers_up/down is
+            # itself 0) - there's nothing to install, so 0 is the correct
+            # answer, not an infinite/NaN one from dividing by an empty sum.
+            buffers_installations_up = buffer_upward_peak / up_weight if up_weight != 0 else 0.0
+            buffers_installations_down = buffer_downward_peak / down_weight if down_weight != 0 else 0.0
             if buffers_installations_up > buffers_installations_down:
                 buffers_stock = buffer_upward_peak * buffers_shares
             else:
@@ -197,11 +222,24 @@ def disp_gas(dimensions, parameters, activities, technologies, profiles, policie
             avg_price = np.mean(prices_hourly[:, coord_act])
             max_val = np.max(-hourly_balance)
             min_val = np.min(-hourly_balance)
-            adjustment_vector = 1 - gas_premium + 2 * gas_premium * ((-hourly_balance - min_val) / (max_val - min_val))
+            # A perfectly flat -hourly_balance profile (max_val == min_val)
+            # makes the intended 0..1 position-in-range ratio undefined
+            # (0/0) - every hour is equally "the" value, so the midpoint
+            # (0.5) is the natural convention: adjustment_vector comes out
+            # uniformly 1 (no adjustment), which matches there being no
+            # actual variation across hours to adjust for.
+            spread = max_val - min_val
+            ratio = (-hourly_balance - min_val) / spread if spread != 0 else np.full_like(hourly_balance, 0.5)
+            adjustment_vector = 1 - gas_premium + 2 * gas_premium * ratio
 
             prices_hourly[:, coord_act] = prices_hourly[:, coord_act] * adjustment_vector.reshape(-1, 1)
 
-            # Ensure average values in the intended levels
-            prices_hourly[:, coord_act] = prices_hourly[:, coord_act] * avg_price / np.mean(prices_hourly[:, coord_act])
+            # Ensure average values in the intended levels - if the
+            # adjustment above zeroed out the mean price entirely, rescaling
+            # back to avg_price is undefined (x/0); leave prices as adjusted
+            # rather than dividing by zero.
+            adjusted_mean = np.mean(prices_hourly[:, coord_act])
+            if adjusted_mean != 0:
+                prices_hourly[:, coord_act] = prices_hourly[:, coord_act] * avg_price / adjusted_mean
 
     return tech_use_hourly, prices_hourly, tech_stock

@@ -15,6 +15,16 @@ def write_sector_balance(types, activities, technologies, writer):
     # Sheet name
     sheet_name = 'Sectoral_balance'
 
+    # Emission-type activities are now stored positive-for-emitters (IESA-Opt
+    # convention). Most have energy_label != any real energy label so never
+    # reach this sheet, but energy_label 'NA' is itself a real member of
+    # types.energy.labels and all 10 emission activities carry it - restore
+    # the old (negative-for-emitters) convention for this local copy first so
+    # the consumption/production split below matches the old behavior.
+    activity_balances = activity_balances.copy()
+    coord_emission_act = np.array([a.is_emission for a in activity_entities])
+    activity_balances[:, coord_emission_act] = -activity_balances[:, coord_emission_act]
+
     # Modify the consumption and production balances
     consumption_balance = activity_balances.copy()
     consumption_balance[activity_balances > 0] = 0

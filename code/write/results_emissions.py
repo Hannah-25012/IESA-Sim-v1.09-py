@@ -12,9 +12,11 @@ def results_emissions(dimensions, types, activities, technologies, results):
     activity_balances = technologies.balancers.activity_balances
     tech_use = technologies.balancers.use.yearly
 
-    # Accounted emissions coordinates
+    # Accounted emissions coordinates. No leading minus: activity_balances is
+    # now positive-for-emitters (IESA-Opt convention), so the raw sum already
+    # is "emitted amount", exactly as the negated sum used to be.
     coord_act = np.array([a.name in emission_targets for a in activity_entities])
-    emission_balances = -np.sum(activity_balances[:, coord_act], axis=1)
+    emission_balances = np.sum(activity_balances[:, coord_act], axis=1)
 
     # Remove emissions account (offsetting) from the total
     coord_emissions = np.array([tech.subsector in ('National ETS', 'National nETS') for tech in tech_entities])

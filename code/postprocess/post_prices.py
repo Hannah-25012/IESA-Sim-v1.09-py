@@ -20,7 +20,16 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
     reshaped = energy_prices_ranges_full.reshape(dimensions['nRp'], -1) # reshaping to make sure the variable go from shape (21,64,7) to (21,) as in Matlab
     energy_prices_ranges = reshaped[:, iP]
     price_ranges_hours = activities.energies.prices.price_ranges_hours
-    activity_balances = technologies.balancers.activity_balances
+    # Emission-type activities are now stored positive-for-emitters (IESA-Opt
+    # convention). This function prices emission activities too (not just
+    # energy ones), including cases where the activity being priced IS itself
+    # emission-type (e.g. 'nER-GHG CO2') - every raw use of activity_balances
+    # below, not just the emission_balances_temp slice, needs the old
+    # (negative-for-emitters) convention. Restore it once, up front, on this
+    # local copy rather than patching each call site individually.
+    activity_balances = technologies.balancers.activity_balances.copy()
+    _coord_emission_act = np.array([a.is_emission for a in activities.entities])
+    activity_balances[:, _coord_emission_act] = -activity_balances[:, _coord_emission_act]
     vom_cost = technologies.balancers.costs.voms[:, iP]
     cap2act = technologies.balancers.cap2acts
     tech_use = technologies.balancers.use.yearly[:, iP]

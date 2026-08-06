@@ -26,8 +26,10 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
         if tech.activity is not None:
             technology_balance[tech.activity.idx] = 0
 
-        # Calculate emissions
-        emissions[tech.idx] = -np.sum(technology_balance[emission_idx])
+        # Calculate emissions. No leading minus: technology_balance is now
+        # positive-for-emitters (IESA-Opt convention), so the raw sum already
+        # is "emitted amount", exactly as the negated sum used to be.
+        emissions[tech.idx] = np.sum(technology_balance[emission_idx])
 
         # Retrieve social perception parameter
         if tech.social_perception == 'Negative':

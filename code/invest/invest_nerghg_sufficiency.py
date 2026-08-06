@@ -18,8 +18,16 @@ def invest_nerghg_sufficiency(dimensions, activities, technologies, techstock_ex
     cap2act = technologies.balancers.cap2acts.reshape(-1, 1)
     actbalance_max = (techstock_test * cap2act) @ np.ones((1, nA)) * activity_balances # ntb x na
 
-    # Calculate the gaps
+    # Calculate the gaps. Emission-type activity_balances are now stored
+    # POSITIVE for emitters (IESA-Opt convention) rather than negative, which
+    # flips the sign of actbalance_max/activity_gap for those columns only -
+    # un-negate just the emission columns before the clip below so this stays
+    # numerically identical to the sufficiency test under the old convention
+    # (do NOT flip the clip direction itself: that would silently zero out the
+    # real gap instead of the always-satisfied case, see invest_nerghg_technologies.py).
     activity_gap = activities_netvolumes - np.sum(actbalance_max, axis=0)
+    coord_emission_act = np.array([a.is_emission for a in activities.entities])
+    activity_gap[coord_emission_act] = -activity_gap[coord_emission_act]
     activity_gap[activity_gap < 0] = 0
 
     # Extract only the emission gaps

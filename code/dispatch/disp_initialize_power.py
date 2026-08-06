@@ -103,6 +103,15 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     gen_per_elec[np.arange(nG), gen_elec_idx] = True
     activity_balance_gen[np.arange(nG), gen_act_idx] = 0
 
+    # Emission-type activity_balances columns are now positive-for-emitters
+    # (IESA-Opt convention). gen_balance_hourly is only ever consumed by
+    # disp_power_generators.py's merit-order price einsum, where an unflipped
+    # sign here would turn a carbon price into a carbon subsidy - negate just
+    # those columns of this local copy so the priced balance matches the old
+    # (negative-for-emitters) convention that einsum was written against.
+    coord_emission_act = np.array([a.is_emission for a in activities.entities])
+    activity_balance_gen[:, coord_emission_act] = -activity_balance_gen[:, coord_emission_act]
+
     gen_profile_matrix = np.column_stack([profile_shape_by_type[gen.profile] for gen in generator_techs])  # (nH, nG)
     gen_availability_hourly[:, :] = gen_profile_matrix * generators_activity[None, :]
 
@@ -168,8 +177,16 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
         # Get the min and max demands and shedding profiles
         shed_max_demand_hourly[:, iS] = ref_profile
         shed_min_demand_hourly[:, iS] = ref_profile - shed_potential
-        shed_max_volume_hourly[:, iS] = shed_max_demand_hourly[:, iS] / np.sum(ref_profile)
-        shed_min_volume_hourly[:, iS] = shed_min_demand_hourly[:, iS] / np.sum(ref_profile)
+        # A shedding technology with zero stock in this period (e.g. not yet
+        # invested into) has an all-zero ref_profile - dividing by its sum
+        # would be 0/0 (NaN), which then poisons every activity the
+        # technology touches, even where its own coefficient is 0 (NaN * 0
+        # is still NaN). No reference profile means no meaningful volume
+        # share to derive, so leave these at their zero-initialized default.
+        ref_profile_sum = np.sum(ref_profile)
+        if ref_profile_sum != 0:
+            shed_max_volume_hourly[:, iS] = shed_max_demand_hourly[:, iS] / ref_profile_sum
+            shed_min_volume_hourly[:, iS] = shed_min_demand_hourly[:, iS] / ref_profile_sum
 
     shed_per_elec = shed_per_elec.astype(bool)
 
@@ -275,8 +292,14 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
         # Save the links
         xc_per_elec[iAk_to_arr, iAk_from_arr, np.arange(nI)] = True
 
-        # Efficiency
-        xc_efficiencies[:, 0] = -1 / xc_balance_matrix[np.arange(nI), from_idx_arr]
+        # Efficiency - an interconnector whose activity_balances row has no
+        # negative entry at all (from_idx_arr then falls back to argmax's
+        # index-0 tie-break, whatever that entry's sign) would divide by
+        # zero here; fall back to 100% efficiency (no loss) for that one
+        # interconnector rather than propagate inf/NaN into xc_supply below.
+        from_balance = xc_balance_matrix[np.arange(nI), from_idx_arr]
+        safe_from_balance = np.where(from_balance != 0, from_balance, 1.0)
+        xc_efficiencies[:, 0] = np.where(from_balance != 0, -1 / safe_from_balance, 1.0)
 
         # Get the hourly availability profiles of the XC technologies
         ref_profile_matrix = np.column_stack([profile_shape_by_type[xc.profile] for xc in interconnector_techs])  # (nH, nI)

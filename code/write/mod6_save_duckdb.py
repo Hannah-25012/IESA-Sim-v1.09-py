@@ -462,7 +462,15 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
     tech_sector = np.array([t.sector for t in tech_entities])
     sectors = np.unique(tech_sector[coord_categories])
     energy_labels = types.energy.labels
-    activity_balances = technologies.balancers.activity_balances
+    # Emission-type activities are now stored positive-for-emitters (IESA-Opt
+    # convention). Most have energy_label != any real energy label so never
+    # reach this table, but energy_label 'NA' is itself a real member of
+    # types.energy.labels and all 10 emission activities carry it - restore
+    # the old (negative-for-emitters) convention for this local copy first so
+    # the consumption/production split below matches the old behavior.
+    activity_balances = technologies.balancers.activity_balances.copy()
+    coord_emission_act = np.array([a.is_emission for a in activity_entities])
+    activity_balances[:, coord_emission_act] = -activity_balances[:, coord_emission_act]
     tech_use = technologies.balancers.use.yearly
     consumption_balance = activity_balances.copy()
     consumption_balance[activity_balances > 0] = 0
