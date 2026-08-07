@@ -145,12 +145,18 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
     tech_use_hourly[:, tech_generators_coord] = gen_use_hourly
 
     if sum(tech_shedding_coord):
-        tech_use_hourly[:, tech_shedding_coord] = (
-            shed_mindemand_hourly +
-            shed_use_hourly * (
-                shed_maxdemand_hourly - shed_mindemand_hourly
-            )
-        ) / (np.ones((nH, 1)) @ shed_multiplier.reshape(1, -1))
+        # A shedding technology with zero stock this period (see
+        # disp_initialize_power's own ref_profile guard) has shed_multiplier
+        # == 0 too - dividing by it here would reintroduce the same NaN this
+        # is meant to avoid. That technology's own shed_*demand_hourly are
+        # already all zero in that case, so 0/0 -> 0 is the correct result,
+        # not inf/NaN.
+        shed_multiplier_row = np.ones((nH, 1)) @ shed_multiplier.reshape(1, -1)
+        numerator = shed_mindemand_hourly + shed_use_hourly * (shed_maxdemand_hourly - shed_mindemand_hourly)
+        tech_use_hourly[:, tech_shedding_coord] = np.divide(
+            numerator, shed_multiplier_row,
+            out=np.zeros_like(numerator), where=shed_multiplier_row != 0,
+        )
 
     if sum(tech_loadshifts_coord) > 0:
         tech_use_hourly[:, tech_loadshifts_coord] = (

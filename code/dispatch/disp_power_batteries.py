@@ -48,7 +48,16 @@ def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
     nSt_a = 3  # activity dimension (discharging, nothing, charging)
 
     bat_stock_arr = np.asarray(bat_stock, dtype=float)
-    charge_vec = -bat_stock_arr * np.asarray(bat_capacity) / np.asarray(bat_efficiency)
+    # A battery with 0 round-trip efficiency (100% flexibility_losses) would
+    # divide by zero here. Such a battery can never usefully charge, so 0
+    # charging cost/benefit is the correct degenerate value, not inf/NaN.
+    bat_efficiency_arr = np.asarray(bat_efficiency, dtype=float)
+    safe_bat_efficiency = np.where(bat_efficiency_arr != 0, bat_efficiency_arr, 1.0)
+    charge_vec = np.where(
+        bat_efficiency_arr != 0,
+        -bat_stock_arr * np.asarray(bat_capacity) / safe_bat_efficiency,
+        0.0,
+    )
     discharge_vec = bat_stock_arr * np.asarray(bat_capacity)
     vom_vec = np.asarray(bat_vom)
     iAk_per_battery = np.array([np.where(bat_per_elec[iB, :])[0][0] for iB in range(nB)])

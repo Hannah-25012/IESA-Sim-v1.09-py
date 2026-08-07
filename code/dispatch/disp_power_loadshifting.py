@@ -88,7 +88,13 @@ def disp_power_loadshifting(loadshifts_efficiencies, loadshifts_capacities,
 
                 price_buy = prices_vector[order[iBuy]]
                 price_sell = prices_vector[order[iSell]]
-                price_gap = price_sell - price_buy / loadshifts_efficiencies[iL]
+                # A 0-efficiency loadshifter (100% flexibility_losses) can
+                # never have a viable price gap - treat it the same as the
+                # loop's own starting value instead of dividing by zero.
+                if loadshifts_efficiencies[iL] != 0:
+                    price_gap = price_sell - price_buy / loadshifts_efficiencies[iL]
+                else:
+                    price_gap = -1
 
             # If there is enough gap, activate the loadshifting
             if price_gap > 0:
@@ -99,8 +105,11 @@ def disp_power_loadshifting(loadshifts_efficiencies, loadshifts_capacities,
                 buy_volume = np.sum(room_up[iH_buy])
                 sell_volume = np.sum(room_down[iH_sell])
                 volume_shift = min(buy_volume, sell_volume)
-                buy_adjust = volume_shift / buy_volume
-                sell_adjust = volume_shift / sell_volume
+                # No room on one side means nothing can shift from it - 0 is
+                # the correct adjust factor, not an inf/NaN from dividing by
+                # an empty room.
+                buy_adjust = volume_shift / buy_volume if buy_volume != 0 else 0.0
+                sell_adjust = volume_shift / sell_volume if sell_volume != 0 else 0.0
 
                 # Adjust the loadshift_hourly vector
                 loadshifts_hourly[iH_buy, iL] = room_up[iH_buy] * buy_adjust
