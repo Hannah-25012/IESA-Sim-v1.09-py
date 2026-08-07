@@ -37,14 +37,21 @@ endpoints are fine for a backend with its own domain shape):
                                 straight to disk instead of popping up an
                                 on-screen window; this is the only way to
                                 see them)
-  GET  /outputs             -> [{"scenario_name", "graphs", "modified"}, ...]
-                                for every output/<scenario> directory that has
-                                saved graphs, newest first - lets the GUI
-                                offer "load a previous run" without needing
-                                the in-memory job that produced it (jobs -
+  GET  /outputs             -> [{"scenario_name", "graphs", "modified",
+                                "has_results"}, ...] for every output/<scenario>
+                                directory that has saved graphs, newest first -
+                                lets the GUI offer "load a previous run" without
+                                needing the in-memory job that produced it (jobs -
                                 and their job_id - don't survive a container
-                                restart, but the saved output/ files do)
+                                restart, but the saved output/ files do).
+                                has_results is false when a run has graphs but
+                                crashed/was killed before simulation_excel.duckdb
+                                was written (graphs write first) - /results would
+                                silently return {} for such a scenario
   GET  /outputs/{scenario_name}/results -> same shape as a job's own "output"
+                                (system_costs/system_emissions/policy_cashflows);
+                                pass ?series=sectoral_emissions,technology_stock,
+                                technology_use,prices for multi-scenario compare
   GET  /outputs/{scenario_name}/graph/{name} -> same as the job-scoped graph
                                 route above, keyed by scenario name instead
   GET  /outputs/{scenario_name}/download -> same as /run/{job_id}/download,
@@ -52,6 +59,10 @@ endpoints are fine for a backend with its own domain shape):
                                 "save results" needs this too once results
                                 came from /outputs (loaded, no live job_id)
                                 rather than a just-finished run
+  DELETE /outputs/{scenario_name} -> removes output/<scenario_name>/ plus its
+                                sidecar Excel reports (<scenario_name>_general.xlsx
+                                etc., written alongside it by results_write.py)
+                                -> {"deleted": "<scenario_name>"}
 
 Only one simulation runs at a time (single-worker executor) - the model
 mutates a handful of on-disk files (SIMmodel.duckdb, output/<scenario>/...)
@@ -59,6 +70,7 @@ that aren't safe to write to concurrently from two runs.
 """
 import io
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -137,6 +149,13 @@ _DEFAULT_SETTINGS = {
     "nIb": 10,
     "nId": 2,
     "year_end": 2050,
+    # simulation_state.duckdb (the full 8760-hour-resolution solver-state
+    # dump) is write-only from this API's perspective - nothing here ever
+    # reads it back, it's deliberately excluded from the download zip below,
+    # and building it has been enough to OOM-kill the container mid-write
+    # (see main.py). Off by default; pass true to opt back in for offline
+    # analysis outside this API.
+    "save_state_duckdb": False,
 }
 
 
@@ -165,13 +184,23 @@ def _build_settings(overrides: Optional[dict]) -> dict:
             "dispatch": merged["nId"],
         },
         "year_end": merged["year_end"],
+        "save_state_duckdb": merged["save_state_duckdb"],
     }
 
 
-def _summarize_output(scenario_name: str) -> dict:
+# Extra series _summarize_output can be asked to include on top of its
+# always-on 3 (see GET /outputs/{name}/results' `series` query param) - kept
+# out of the default payload since live job results (_run_job) and the
+# existing single-scenario Load path only ever need the cheap 3, while
+# multi-scenario comparison (run.html's Compare flow) wants more per call.
+_EXTRA_OUTPUT_SERIES = {"sectoral_emissions", "technology_stock", "technology_use", "prices"}
+
+
+def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -> dict:
     """Pull a compact JSON-safe summary from simulation_excel.duckdb rather
     than returning the full relational database (which includes large
-    hourly tables) inline in the HTTP response."""
+    hourly tables) inline in the HTTP response. `extra` opts into additional
+    series beyond the always-on 3 - see _EXTRA_OUTPUT_SERIES."""
     db_path = Path("output") / scenario_name / "simulation_excel.duckdb"
     if not db_path.exists():
         return {}
@@ -182,11 +211,38 @@ def _summarize_output(scenario_name: str) -> dict:
             cols = [d[0] for d in con.execute(sql).description]
             return [dict(zip(cols, r)) for r in con.execute(sql).fetchall()]
 
-        return {
+        result = {
             "system_costs": rows("SELECT * FROM system_costs ORDER BY period, cost_category"),
             "system_emissions": rows("SELECT * FROM system_emissions ORDER BY period"),
             "policy_cashflows": rows("SELECT * FROM policy_cashflows ORDER BY period, cashflow_category"),
         }
+
+        if "sectoral_emissions" in extra:
+            result["sectoral_emissions"] = rows(
+                "SELECT sector, period, positive, negative FROM sectoral_emissions ORDER BY sector, period")
+
+        # technology_stock/use are per-technology (not pre-aggregated) - the
+        # same granularity compare-results.html already sends for Sim vs Opt,
+        # aggregated client-side by sector/category rather than in SQL here.
+        if "technology_stock" in extra:
+            result["technology_stock"] = rows("""
+                SELECT t.name, t.sector, t.category, ts.period, ts.stock
+                FROM technology_stock ts JOIN technologies t ON t.id = ts.tech_id
+                ORDER BY t.sector, t.name, ts.period""")
+
+        if "technology_use" in extra:
+            result["technology_use"] = rows("""
+                SELECT t.name, t.sector, t.category, tu.period, tu.use
+                FROM technology_use tu JOIN technologies t ON t.id = tu.tech_id
+                ORDER BY t.sector, t.name, tu.period""")
+
+        if "prices" in extra:
+            result["energy_prices"] = rows(
+                "SELECT activity_name, period, price FROM energy_prices ORDER BY activity_name, period")
+            result["emission_prices"] = rows(
+                "SELECT activity_name, period, price FROM emission_prices ORDER BY activity_name, period")
+
+        return result
     finally:
         con.close()
 
@@ -221,6 +277,13 @@ def _list_output_scenarios() -> list[dict]:
             "scenario_name": d.name,
             "graphs": graphs,
             "modified": datetime.fromtimestamp(mtime).isoformat(timespec="seconds"),
+            # Graphs are written before simulation_excel.duckdb (see
+            # code/main.py), so a run that crashed or was killed partway
+            # through can leave a scenario with graphs but no queryable
+            # results - _summarize_output would silently return {} for it.
+            # Flagged here so callers (run.html's Compare flow) can warn
+            # instead of rendering that scenario as blank data.
+            "has_results": (d / "simulation_excel.duckdb").exists(),
         })
     scenarios.sort(key=lambda s: s["modified"], reverse=True)
     return scenarios
@@ -425,6 +488,21 @@ def download_output(scenario_name: str):
     )
 
 
+@app.get("/outputs/{scenario_name}/download_excel_duckdb")
+def download_output_excel_duckdb(scenario_name: str):
+    """Raw simulation_excel.duckdb only, not the zip - the combined Sim/Opt
+    results-comparison page uploads this directly to dbcompare-backend's
+    POST /results/load, the same way IESA-Opt's own results.duckdb is
+    uploaded there (see julia-backend's GET /api/outputs/download)."""
+    if not any(s["scenario_name"] == scenario_name for s in _list_output_scenarios()):
+        raise HTTPException(404, f"No saved output named {scenario_name!r}")
+
+    path = Path("output") / scenario_name / "simulation_excel.duckdb"
+    if not path.exists():
+        raise HTTPException(404, f"No simulation_excel.duckdb saved for {scenario_name!r}")
+    return FileResponse(path, media_type="application/octet-stream", filename="simulation_excel.duckdb")
+
+
 @app.get("/run/{job_id}/graph/{name}")
 def get_graph(job_id: str, name: str):
     job = _jobs.get(job_id)
@@ -449,10 +527,27 @@ def list_outputs():
 
 
 @app.get("/outputs/{scenario_name}/results")
-def output_results(scenario_name: str):
+def output_results(scenario_name: str, series: str = ""):
     if not any(s["scenario_name"] == scenario_name for s in _list_output_scenarios()):
         raise HTTPException(404, f"No saved output named {scenario_name!r}")
-    return _summarize_output(scenario_name)
+    requested = {s.strip() for s in series.split(",") if s.strip()}
+    unknown = requested - _EXTRA_OUTPUT_SERIES
+    if unknown:
+        raise HTTPException(400, f"Unknown series {sorted(unknown)} - choose from {sorted(_EXTRA_OUTPUT_SERIES)}")
+    return _summarize_output(scenario_name, extra=frozenset(requested))
+
+
+@app.delete("/outputs/{scenario_name}")
+def delete_output(scenario_name: str):
+    if not any(s["scenario_name"] == scenario_name for s in _list_output_scenarios()):
+        raise HTTPException(404, f"No saved output named {scenario_name!r}")
+    shutil.rmtree(Path("output") / scenario_name, ignore_errors=True)
+    # Sidecar Excel reports (results_write.py) are written as siblings of
+    # output/<scenario_name>/, not inside it - e.g. "<scenario_name>_general.xlsx" -
+    # so they need their own cleanup here.
+    for suffix in ("_general.xlsx", "_gas_prices_hourly.xlsx", "_power_prices_hourly.xlsx"):
+        (Path("output") / f"{scenario_name}{suffix}").unlink(missing_ok=True)
+    return {"deleted": scenario_name}
 
 
 @app.get("/outputs/{scenario_name}/graph/{name}")

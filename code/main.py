@@ -15,7 +15,6 @@ for _phase_dir in ('read', 'initialize', 'invest', 'dispatch', 'postprocess', 'w
 import time
 import pickle
 from pathlib import Path
-import matplotlib.pyplot as plt
 from mod0_read_data_save_duck import mod0_read_data_save_duck
 from mod0_load_duckdb import load_from_duckdb
 from mod1_initialize import mod1_initialize
@@ -131,23 +130,6 @@ def main(settings):
     )
     print("Results generated successfully.")
 
-    # results_graph() only calls plt.show(block=False), which schedules the
-    # figures but doesn't force them onto screen - normally they'd only get
-    # flushed by the caller's final blocking plt.show() (see run_IESA_sim.py).
-    # The duckDB writes below can take a long time on a full multi-period run
-    # (the hourly fact tables are large), so without a real flush here the
-    # process goes straight back to being CPU-busy and the GUI event loop
-    # never gets enough time to actually paint each window's canvas - the
-    # windows appear (empty/unpainted) but the plotted data never shows.
-    # A tiny plt.pause() isn't enough for that to complete, especially with
-    # several figures open at once, so draw everything explicitly first and
-    # then hold the event loop open for a few seconds per figure.
-    for fig_num in plt.get_fignums():
-        fig = plt.figure(fig_num)
-        fig.canvas.draw()
-        fig.canvas.flush_events()
-    plt.pause(2)
-
     # Note: The commented-out part saves output to .mat file (if interaction with matlab is desired)
     # if save_output:
     #     output_file = os.path.join(output_path, '_variables.mat')
@@ -180,12 +162,25 @@ def main(settings):
         print(f"Output successfully saved to {output_file}")
 
         # Same output, as relational duckDB databases instead of a pickle:
-        # one mirroring the full state above, one mirroring the Excel reports.
-        state_db_path = str(Path(output_path) / 'simulation_state.duckdb')
-        save_state_duckdb(dimensions, parameters, types, activities, technologies, profiles, results, agents, state_db_path)
-
+        # one mirroring the Excel reports, one mirroring the full state above.
+        # excel_db goes first and unconditionally - it's what
+        # /outputs/{name}/results actually reads (see app.py's
+        # _summarize_output) and what the results-download zip bundles.
         excel_db_path = str(Path(output_path) / 'simulation_excel.duckdb')
         save_excel_duckdb(types, activities, technologies, agents, results, excel_db_path)
+
+        # save_state_duckdb writes full 8760-hour resolution across every
+        # technology/activity and period as long-format tables (tens of
+        # millions of rows, 800MB-1GB+) - nothing in the API path ever reads
+        # it back (deliberately left out of the download zip - see app.py),
+        # and building it has been enough to OOM-kill the container
+        # mid-write. Off by default; settings.get (not settings[...]) so any
+        # caller that predates this flag still gets the old always-on
+        # behavior. Ordered after excel_db so a crash here no longer takes
+        # the actually-used results down with it.
+        if settings.get('save_state_duckdb', True):
+            state_db_path = str(Path(output_path) / 'simulation_state.duckdb')
+            save_state_duckdb(dimensions, parameters, types, activities, technologies, profiles, results, agents, state_db_path)
 
 
     # Print the last time stamp
