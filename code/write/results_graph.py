@@ -8,7 +8,7 @@ from graph_policyCashflows import graph_policyCashflows
 from graph_priceDuration import graph_priceDuration
 import numpy as np
 
-def results_graph(dimensions, types, activities, technologies, results, plot_price_duration, output_path):
+def results_graph(dimensions, types, activities, technologies, policies, results, plot_price_duration, output_path):
 
     # Graphs are saved as interactive Plotly HTML files rather than shown
     # interactively, so this doesn't pop up a window on screen - a GUI (or
@@ -49,7 +49,7 @@ def results_graph(dimensions, types, activities, technologies, results, plot_pri
 
     # Graph the total emissions
     print("--Graphing the system GHG emissions...")
-    graph_systemEmissions(activities, technologies, results, font_name, font_size, graphs_dir)
+    graph_systemEmissions(activities, technologies, policies, results, font_name, font_size, graphs_dir)
 
     # Graph the system costs
     print("--Graphing the system costs...")

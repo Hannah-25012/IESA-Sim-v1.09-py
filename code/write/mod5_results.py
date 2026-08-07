@@ -11,7 +11,7 @@ def mod5_results(dimensions, types, parameters, activities, technologies, agents
 
     # Call the graphing routine
     print("-Generating the graphs...")
-    results_graph(dimensions, types, activities, technologies, results, plot_price_duration)
+    results_graph(dimensions, types, activities, technologies, policies, results, plot_price_duration, outputName_root)
 
     # Call the writing routine
     print("-Generating the reports...")

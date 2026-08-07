@@ -3,7 +3,7 @@ import os
 import numpy as np
 import plotly.graph_objects as go
 
-def graph_systemEmissions(activities, technologies, results, font_name, font_size, graphs_dir):
+def graph_systemEmissions(activities, technologies, policies, results, font_name, font_size, graphs_dir):
 
     # Extract parameters
     periods = activities.periods
@@ -15,16 +15,34 @@ def graph_systemEmissions(activities, technologies, results, font_name, font_siz
     years = np.arange(2015, 2024)  # creates an array from 2015 to 2023
     realized_emissions = [194.4, 195.1, 192.4, 187.2, 181.4, 164.8, 167.7, 154.1, 145.4]
 
-    # Calculating the emission target
-    tech_by_id = {tech.id: tech for tech in tech_entities}
-    target_techs = [tech_by_id[tid] for tid in ('Emi02_01', 'Emi03_01') if tid in tech_by_id]
-    coord_tech = [tech.idx for tech in target_techs]
-    emission_target = np.sum(tech_stock_max[coord_tech, :], axis=0)
+    # Calculating the emission target: prefer IESA-Opt's own per-node policy
+    # input (node_emission_targets, see mod0_load_duckdb.py's
+    # _load_node_emission_targets) when the loaded database provides it -
+    # a real declining-to-net-zero target trajectory, not derived from any
+    # technology. Falls back to the older technology-stock approximation
+    # (sum of Emi02_01/Emi03_01's own max capacity) only when it isn't
+    # available - a native IESA-Sim database has no node_emission_targets
+    # table at all, and those two Tech_IDs are Sim's own numbering for
+    # "ETS quota" + "non-ETS emissions" (IESA-Opt bundles the same two
+    # concepts under Emi02_01/Emi02_02 instead, so this fallback only means
+    # anything for a native Sim-built database, never an Opt-sourced or
+    # merged one).
+    if "NL" in policies.emission_targets.nodes:
+        node_idx = policies.emission_targets.nodes.index("NL")
+        target_x = list(periods)
+        target_y = list(policies.emission_targets.all[node_idx, :])
+    else:
+        tech_by_id = {tech.id: tech for tech in tech_entities}
+        target_techs = [tech_by_id[tid] for tid in ('Emi02_01', 'Emi03_01') if tid in tech_by_id]
+        coord_tech = [tech.idx for tech in target_techs]
+        emission_target = np.sum(tech_stock_max[coord_tech, :], axis=0)
+        target_x = list(periods[2:])
+        target_y = list(emission_target[2:])
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=list(periods), y=list(emissions), mode='lines',
                               name='modeled emissions', line=dict(color='black', width=2)))
-    fig.add_trace(go.Scatter(x=list(periods[2:]), y=list(emission_target[2:]), mode='lines',
+    fig.add_trace(go.Scatter(x=target_x, y=target_y, mode='lines',
                               name='target emissions', line=dict(color='red', width=2, dash='dash')))
     fig.add_trace(go.Scatter(x=list(years), y=realized_emissions, mode='lines',
                               name='historical emissions', line=dict(color='blue', width=2, dash='dot')))

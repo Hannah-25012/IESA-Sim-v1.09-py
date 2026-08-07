@@ -373,6 +373,35 @@ def _load_technologies(con, periods, activities_names):
     return Struct(balancers=balancers, infra=infra, retrofittings=retrofittings)
 
 
+def _load_node_emission_targets(con, periods):
+    """IESA-Opt-only policy input (not part of dbcompare-backend/app.py's
+    _IESA_OPT_SIM_SHARED_TABLES, so a native Sim-built database never has
+    it, and a merged/unified database only carries it through when
+    IESA-Opt itself provided targets) - per-node, per-period emission caps.
+    Node-keyed rather than activity-keyed, so it doesn't fit _load_policies'
+    own load_block helper below. Returns an empty Struct (nodes=[]) when
+    the table doesn't exist, so callers can branch on `"X" in nodes` rather
+    than needing their own try/except."""
+    table_exists = con.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'node_emission_targets'"
+    ).fetchone()[0] > 0
+    if not table_exists:
+        return Struct(nodes=[])
+    df = con.execute(
+        "SELECT node, period, target_air, target_all, target_bunker, target_feedstock "
+        "FROM node_emission_targets"
+    ).fetchdf()
+    nodes = sorted(df["node"].unique().tolist())
+    return Struct(
+        nodes=nodes,
+        periods=np.array(periods),
+        air=_pivot(df, "node", nodes, "period", periods, "target_air"),
+        all=_pivot(df, "node", nodes, "period", periods, "target_all"),
+        bunker=_pivot(df, "node", nodes, "period", periods, "target_bunker"),
+        feedstock=_pivot(df, "node", nodes, "period", periods, "target_feedstock"),
+    )
+
+
 def _load_policies(con, periods):
     def load_block(table):
         df = con.execute(f"SELECT activity_name, period, value, seq FROM {table}").fetchdf()
@@ -385,6 +414,7 @@ def _load_policies(con, periods):
         taxes=load_block("policy_taxes"),
         feedins=load_block("policy_feedins"),
         subsidies=load_block("policy_subsidies"),
+        emission_targets=_load_node_emission_targets(con, periods),
     )
 
 
