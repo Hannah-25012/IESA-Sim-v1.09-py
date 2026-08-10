@@ -137,26 +137,32 @@ class _TeeCapture:
 # need to override the fields they care about.
 _DEFAULT_SETTINGS = {
     # The plain "...Policy + Agents.xlsx" (no suffix) is kept exactly as
-    # originally shipped. "...(fixed names).xlsx" adds only the corrected
-    # Alkaline Electrolyzer/Imported Hydrogen (liquid) names (a pure
-    # sharedStrings.xml text fix, verified to produce numerically identical
-    # output). This default goes one step further: "...(fixed names, opt
-    # shedding logic).xlsx" plus disp_initialize_power.py's shed_potential
-    # formula now implementing IESA-Opt's own shed_capacity derivation
-    # (shedding_capacity_percentage * peak(hourly_profile) * cap2act, see
-    # julia-backend/src/parameters.jl's compute_shed_capacity!) instead of
-    # treating shedding_capacity as an already-final per-unit-capacity rate.
-    # shedding_capacity in the workbook is now a plain [%] (matching
-    # IESA-Opt's convention) rather than the old "[PJ/UoC-h]"
-    # -EnergyBalance!CFrow/8760 formula - the two are not interchangeable,
-    # so this is a real behavior change for the 6 technologies with a
-    # nonzero shedding_capacity, not a relabeling. Verified: all 3
-    # electrolyzers now invest in smooth, gradually-growing capacity
-    # instead of either a hard zero-use lockout or (with a bare percentage
-    # substitution, tried and reverted first) the wildly unstable dispatch
-    # that came from skipping the peak-profile step IESA-Opt's own formula
-    # applies.
-    "file_name": "IESA-Opt_v4.4.5 Policy + Agents (fixed names, opt shedding logic).xlsx",
+    # originally shipped - it does NOT have the emission-sign flip below, so
+    # it is no longer a valid default on its own (see next paragraph).
+    #
+    # code/write/results_emissions.py and friends have unconditionally
+    # expected IESA-Opt's positive-for-emitters sign convention since
+    # "Invert emission coefficient sign convention to match IESA-Opt" - that
+    # is not optional/file-dependent, so the default input file MUST be one
+    # of the "...(emissions sign flipped)..." variants, or every emissions-
+    # derived output (system_emissions, sectoral_emissions, the emissions
+    # graph, EUA/tax cashflows, ...) comes out sign-inverted across the
+    # board (every sector strongly negative every period - caught only by
+    # eyeballing the system emissions graph after this file briefly pointed
+    # at a non-flipped variant; the negative numbers were not otherwise
+    # obviously wrong at a glance).
+    #
+    # This default also carries the corrected Alkaline Electrolyzer/Imported
+    # Hydrogen (liquid) names (pure sharedStrings.xml text, verified to
+    # produce numerically identical output on top of a sign-matched base)
+    # and IESA-Opt's own shed_capacity derivation (shedding_capacity_percentage
+    # * peak(hourly_profile) * cap2act, see disp_initialize_power.py and
+    # julia-backend/src/parameters.jl's compute_shed_capacity!, instead of
+    # treating shedding_capacity as an already-final per-unit-capacity rate)
+    # - shedding_capacity in the workbook is now a plain [%] matching
+    # IESA-Opt's convention, a real behavior change for the 6 technologies
+    # that have one, not a relabeling.
+    "file_name": "IESA-Opt_v4.4.5 Policy + Agents (emissions sign flipped, fixed names, opt shedding logic).xlsx",
     "scenario_name": "Policy + Agents",
     "db_path": "SIMmodel.duckdb",
     # Defaults to True so a freshly-built container (no duckDB baked in,
