@@ -27,10 +27,22 @@ def graph_systemEmissions(activities, technologies, policies, results, font_name
     # concepts under Emi02_01/Emi02_02 instead, so this fallback only means
     # anything for a native Sim-built database, never an Opt-sourced or
     # merged one).
+    #
+    # .air (not .all): node_emission_targets carries four target columns -
+    # target_air is the direct energy-system scope that matches what
+    # `emissions` above actually is (computed from Sim's own dispatch/fuel
+    # combustion). target_all is a broader inclusive scope (see IESA-Opt's
+    # own "emissionTarget_inclScope3andFuelex" table/naming - Scope 3 and
+    # fuel exports included) - roughly 4x larger in the base year (1000 vs
+    # 227.5 Mton for NL in 2022) and not comparable to either the modeled
+    # or historical traces on this graph. Using .all here (an earlier
+    # mistake in this same fix) produced a target line starting around
+    # 1000 Mton against ~120-200 Mton modeled/historical values - not a
+    # data problem, a wrong-field bug.
     if "NL" in policies.emission_targets.nodes:
         node_idx = policies.emission_targets.nodes.index("NL")
         target_x = list(periods)
-        target_y = list(policies.emission_targets.all[node_idx, :])
+        target_y = list(policies.emission_targets.air[node_idx, :])
     else:
         tech_by_id = {tech.id: tech for tech in tech_entities}
         target_techs = [tech_by_id[tid] for tid in ('Emi02_01', 'Emi03_01') if tid in tech_by_id]
