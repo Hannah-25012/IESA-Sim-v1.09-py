@@ -48,7 +48,43 @@ def invest_techstocks_def(dimensions, technologies, tech_stock_original, prelimi
     for tech in tech_entities:
         iTb = tech.idx
 
-        if 'Primary' in tech.category:
+        # 'XC Trade' is IESA-Opt's own category for cross-border trade
+        # technologies (electricity import/export aggregates) - IESA-Sim's
+        # own workbooks never use it as a category (only as a subsector,
+        # with a real category of their own: Primary/External/Exports/
+        # Conversion - see dbcompare-backend's technologies entry), so this
+        # only ever matches an Opt-sourced or merged-database technology,
+        # never a native Sim one. Added alongside 'Primary' because a
+        # merged database's IESA-Opt-anchored XC Trade technology (e.g.
+        # "Electricity Import from EU - Power NL") has no Sim-side
+        # equivalent to inherit a 'Primary' categorization from (Sim
+        # models the same cross-border capacity as several separate
+        # bilateral, per-country technologies instead of Opt's one
+        # aggregate) - without this, that technology is left subject to
+        # normal cost-competitive investment, which spirals into a
+        # circular scarcity-pricing trap (its own "fuel" cost is the price
+        # of the electricity it imports, already inflated by its own
+        # under-investment) instead of representing existing interconnector
+        # capacity the way Opt's own model treats it (IESA-Opt's own
+        # solver doesn't re-justify import/export capacity economically
+        # either - it links import and export capacity together as the
+        # same physical line, see julia-backend/src/model/stock.jl's
+        # linked_investments_XC).
+        # subsector='Inland generation' is IESA-Opt's own placeholder for
+        # externally-sourced generation feeding the shared cross-border
+        # pool (e.g. "Inland generation - Power EU") - conceptually the
+        # same "already exists, doesn't need investment justification"
+        # role as a Primary resource (it represents capacity elsewhere in
+        # Europe supplying the pool, not a new plant IESA-Sim's own model
+        # would ever build), but IESA-Opt's own source data leaves it with
+        # stock_initial=0 and no cost data at all (confirmed directly
+        # against IESA-Opt's own database, not a merge gap), so normal
+        # investment logic can never bring it online. Like 'XC Trade'
+        # above, this subsector value never appears in IESA-Sim's own
+        # workbooks (checked directly), so this only ever matches an
+        # Opt-sourced or merged-database technology - zero effect on a
+        # native Sim run.
+        if 'Primary' in tech.category or 'XC Trade' in tech.category or tech.subsector == 'Inland generation':
             tech_stock[iTb] = tech_stock_max[iTb]
             primary_decommissionings[iTb] = tech_stock_max[iTb]
 
