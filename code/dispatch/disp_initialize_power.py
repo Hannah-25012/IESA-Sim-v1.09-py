@@ -168,11 +168,31 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
         # Save the shed multiplier
         shed_multiplier[iS, 0] = elec_balance
 
-        # Get the hourly availability profiles of the shedding technologies
+        # Get the hourly availability profiles of the shedding technologies.
+        # shedding_capacity is now IESA-Opt's own convention: a plain
+        # fraction (0-1) of installed capacity, matching IESA-Opt's
+        # shed_capacity_percentage (Technologies sheet, "Asymetric
+        # flexibility / Shedding capacity", now labeled "[%]"). IESA-Opt
+        # derives its own absolute per-unit-capacity ceiling as
+        # shed_capacity_percentage * peak(hourly_profile) * cap2act (see
+        # julia-backend/src/parameters.jl's compute_shed_capacity!, used in
+        # model/hourly.jl as shed_capacity(t,ps) * techStock(t,ps)) rather
+        # than using the raw percentage directly - the peak-of-profile
+        # factor is the piece Sim's old formula never had an equivalent of.
+        # Sim's own hourly profiles are sum-normalized (integrate to 1.0
+        # across the year - see HourlyProfiles sheet), so a Flat profile's
+        # peak works out to ~1/8760, giving this the same order of
+        # magnitude as the old "-EnergyBalance!CFrow/8760" formula it
+        # replaces, just derived from Sim's own profile shapes instead of a
+        # hand-written Excel formula referencing a value that's easy to get
+        # out of sync with the technology's own actual profile.
+        shed_profile = profile_shape_by_type[shed.profile]
+        shed_peak_profile = np.max(shed_profile)
         ref_profile = (tech_stock_shedding[iS] * elec_balance *
-                    cap2act_shedding[iS] * profile_shape_by_type[shed.profile])
-        shed_potential = np.minimum(ref_profile * shedding_limits_values[iS],
-                                    tech_stock_shedding[iS] * cap2act_shedding[iS] * shedding_capacity_values[iS])
+                    cap2act_shedding[iS] * shed_profile)
+        shed_potential = np.minimum(
+            ref_profile * shedding_limits_values[iS],
+            tech_stock_shedding[iS] * cap2act_shedding[iS] * shed_peak_profile * shedding_capacity_values[iS])
 
         # Get the min and max demands and shedding profiles
         shed_max_demand_hourly[:, iS] = ref_profile

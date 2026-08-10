@@ -136,7 +136,27 @@ class _TeeCapture:
 # Same shape/defaults as settings/IESA_settings_v1.10.json - callers only
 # need to override the fields they care about.
 _DEFAULT_SETTINGS = {
-    "file_name": "IESA-Opt_v4.4.5 Policy + Agents.xlsx",
+    # The plain "...Policy + Agents.xlsx" (no suffix) is kept exactly as
+    # originally shipped. "...(fixed names).xlsx" adds only the corrected
+    # Alkaline Electrolyzer/Imported Hydrogen (liquid) names (a pure
+    # sharedStrings.xml text fix, verified to produce numerically identical
+    # output). This default goes one step further: "...(fixed names, opt
+    # shedding logic).xlsx" plus disp_initialize_power.py's shed_potential
+    # formula now implementing IESA-Opt's own shed_capacity derivation
+    # (shedding_capacity_percentage * peak(hourly_profile) * cap2act, see
+    # julia-backend/src/parameters.jl's compute_shed_capacity!) instead of
+    # treating shedding_capacity as an already-final per-unit-capacity rate.
+    # shedding_capacity in the workbook is now a plain [%] (matching
+    # IESA-Opt's convention) rather than the old "[PJ/UoC-h]"
+    # -EnergyBalance!CFrow/8760 formula - the two are not interchangeable,
+    # so this is a real behavior change for the 6 technologies with a
+    # nonzero shedding_capacity, not a relabeling. Verified: all 3
+    # electrolyzers now invest in smooth, gradually-growing capacity
+    # instead of either a hard zero-use lockout or (with a bare percentage
+    # substitution, tried and reverted first) the wildly unstable dispatch
+    # that came from skipping the peak-profile step IESA-Opt's own formula
+    # applies.
+    "file_name": "IESA-Opt_v4.4.5 Policy + Agents (fixed names, opt shedding logic).xlsx",
     "scenario_name": "Policy + Agents",
     "db_path": "SIMmodel.duckdb",
     # Defaults to True so a freshly-built container (no duckDB baked in,
