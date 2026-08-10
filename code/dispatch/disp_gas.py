@@ -196,7 +196,23 @@ def disp_gas(dimensions, parameters, activities, technologies, profiles, policie
             buffers_up = buffer_up[coord_buffer]
             buffers_down = buffer_down[coord_buffer]
             buffers_capacities = buffer_capacity[coord_buffer]
-            buffers_shares = 1 - np.abs(buffers_capacities / buffer_days - 1) if buffer_days != 0 else np.zeros_like(buffers_capacities)
+            # Clamped to >=0 (not just the raw 1-|ratio-1|, which goes
+            # negative whenever a buffer's capacity/buffer_days ratio is
+            # far from 1): a buffer tech with a poor-fit capacity should
+            # get zero share of the peak, not a negative one. Without the
+            # clamp, two buffer techs' shares can nearly cancel (one
+            # strongly positive, one strongly negative), collapsing
+            # shares_sum toward - but not exactly to - zero; the
+            # shares_sum != 0 guard only catches the exact-zero case, so a
+            # near-zero denominator still slipped through and blew
+            # buffers_shares (and everything downstream: buffers_stock,
+            # tech_stock, tech_use_hourly) up to an enormous magnitude.
+            # With every term restricted to [0, 1], shares_sum is a sum of
+            # non-negatives - it can only be near zero when every share is
+            # itself near zero, in which case the ratio stays bounded
+            # (worst case one term dominates and normalizes to ~1) instead
+            # of blowing up from cancellation.
+            buffers_shares = np.clip(1 - np.abs(buffers_capacities / buffer_days - 1), 0, None) if buffer_days != 0 else np.zeros_like(buffers_capacities)
             shares_sum = np.sum(buffers_shares)
             buffers_shares = buffers_shares / shares_sum if shares_sum != 0 else buffers_shares
 
