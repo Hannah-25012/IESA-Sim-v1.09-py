@@ -50,24 +50,25 @@ def graph_sectoralEmissions(activities, types, results, font_name, font_size, co
     a_colors = [11, 9, 5, 2, 0, 10, 12, 1, 7, 14, 15, 4, 3, 8]
     b_colors = a_colors[:13]
 
-    # Creating the graph. Each sector gets one legend entry from its positive
-    # trace; the negative-side trace for the same sector reuses that color
-    # but is hidden from the legend (showlegend=False) instead of showing up
-    # a second time under the same name - matches the matplotlib version's
-    # own legend, which (by how many artists vs. label-list entries it had)
-    # only ever showed one entry per sector too.
+    # Creating the graph. Each sector's positive (gross-emitting) and negative
+    # (net-reducing, e.g. CCUS-abated) stacks are genuinely different
+    # quantities sharing one color, so each gets its own labeled legend entry
+    # ("<sector> +" / "<sector> -") instead of the negative side hiding behind
+    # the positive one under a shared name. Stored CO_2 has no negative-side
+    # counterpart at all, so it keeps its plain name.
     fig = go.Figure()
     for i in range(y1.shape[0]):
-        name = 'Stored CO_2' if i == len(ordered_labels) else ordered_labels[i]
+        is_stored = i == len(ordered_labels)
+        name = 'Stored CO_2' if is_stored else f'{ordered_labels[i]} +'
         fig.add_trace(go.Bar(
             x=list(periods), y=y1[i, :], name=name,
             marker_color=rgb(color_code, a_colors[i]),
-            marker_opacity=0.5 if i == len(ordered_labels) else 1.0,
+            marker_opacity=0.5 if is_stored else 1.0,
         ))
     for i in range(y2.shape[0]):
         fig.add_trace(go.Bar(
-            x=list(periods), y=y2[i, :], name=ordered_labels[i],
-            marker_color=rgb(color_code, b_colors[i]), showlegend=False,
+            x=list(periods), y=y2[i, :], name=f'{ordered_labels[i]} -',
+            marker_color=rgb(color_code, b_colors[i]),
         ))
 
     fig.add_trace(go.Scatter(
