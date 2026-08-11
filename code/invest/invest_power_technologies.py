@@ -45,8 +45,31 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
 
             # Activate the volumes accordingly with the quality of their capture rates and capacity factors. If capacity factors are above a threshold and
             # capture rates satisfy a minimum then activate. If capture rates are above a threshold and capacity factors satisfy a minimum then activate.
-            condition_1 = generator_capt_rate[iTb] >= powinv_CR_threshold and generator_norm_ut_fact[iTb] >= powinv_NUF_min
-            condition_2 = generator_norm_ut_fact[iTb] >= powinv_NUF_threshold and generator_capt_rate[iTb] >= powinv_CR_min
+            #
+            # A technology with no operating history yet (zero stock the
+            # previous period - e.g. any new-build generator whose
+            # stock_initial is 0: Nuclear SMR, Hydrogen Turbines, CCGT wCCS,
+            # or a merged database's Offshore Wind/Nuclear) has an undefined
+            # (NaN) capture rate and utilization factor - post_generator_indicators.py
+            # sets both to NaN when there's no output to measure. Every
+            # "NaN >= threshold" is False, so the gate would block it forever:
+            # it can't earn the operating history the gate needs without a
+            # first investment, and can't get a first investment without that
+            # history. Treat an undefined metric as "passes" so a never-built
+            # technology gets an initial foothold, after which it has real
+            # stock, a real CR/NUF, and is judged normally. The SPBT and
+            # multi-criteria screening below still apply (both NaN-guarded),
+            # so this is a first look, not a free build - verified to produce
+            # plausible clean-firm-capacity buildout trajectories rather than
+            # runaway investment.
+            cr = generator_capt_rate[iTb]
+            nuf = generator_norm_ut_fact[iTb]
+            cr_thr_ok = np.isnan(cr) or cr >= powinv_CR_threshold
+            cr_min_ok = np.isnan(cr) or cr >= powinv_CR_min
+            nuf_thr_ok = np.isnan(nuf) or nuf >= powinv_NUF_threshold
+            nuf_min_ok = np.isnan(nuf) or nuf >= powinv_NUF_min
+            condition_1 = cr_thr_ok and nuf_min_ok
+            condition_2 = nuf_thr_ok and cr_min_ok
 
             # Batteries are always eligible if cost-effective
             if tech.flexibility_form == 'Storage':
@@ -55,11 +78,19 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
             # Execute the condition
             if condition_1 or condition_2:
 
-                # Calculate the SPBT of the technology
-                powinv_SPBT_iTb = inv_cost[iTb] * tech_stock[iTb] / generator_cash_flow[iTb]
+                # Calculate the SPBT of the technology. A never-operated
+                # technology has zero cash flow, so this would be 0/0 = NaN,
+                # which fails the appetite check below (NaN <= min is False)
+                # and re-blocks the very first investment - treat "no cash
+                # flow yet" as NaN and let it through, consistent with the
+                # NaN-eligibility handling above.
+                if generator_cash_flow[iTb] != 0:
+                    powinv_SPBT_iTb = inv_cost[iTb] * tech_stock[iTb] / generator_cash_flow[iTb]
+                else:
+                    powinv_SPBT_iTb = np.nan
 
                 # Check if the technology meets the investors' appetite
-                if powinv_SPBT_iTb <= powinv_SPBT_min:
+                if np.isnan(powinv_SPBT_iTb) or powinv_SPBT_iTb <= powinv_SPBT_min:
 
                     # Determine potential volume ranges for investments accordingly with 1GW to max(1GW,max investment)
                     range_min = 1  # GW
@@ -83,8 +114,15 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
                     # A) We recalculate economic performance based on SPBT:
                     # SPBT <= benchmark =1, SPBT >= min = 0
                     multi_criteria_generator = multi_criteria_performance_tech[iTb, :].copy()
-                    powinv_spbt = 1 - (powinv_SPBT_iTb - powinv_SPBT_benchmark) / (powinv_SPBT_min - powinv_SPBT_benchmark)
-                    multi_criteria_generator[iMC3] = max(min(1, powinv_spbt), 0)
+                    # No SPBT yet (never operated) -> no economic score to add;
+                    # leave the cost-performance criterion at 0 so the first
+                    # foothold stays small and driven by the other criteria,
+                    # not by a fabricated payback number.
+                    if np.isnan(powinv_SPBT_iTb):
+                        multi_criteria_generator[iMC3] = 0.0
+                    else:
+                        powinv_spbt = 1 - (powinv_SPBT_iTb - powinv_SPBT_benchmark) / (powinv_SPBT_min - powinv_SPBT_benchmark)
+                        multi_criteria_generator[iMC3] = max(min(1, powinv_spbt), 0)
 
                     # B) We use the multiCriteria_performance matrix to obtain an indicator from 0 to 1 for each technology and actor, we then multiply
                     # by the range and its population fraction
