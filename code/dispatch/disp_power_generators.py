@@ -3,7 +3,8 @@ import numpy as np
 
 def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
                           gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly,
-                          prices_hourly, voll):
+                          prices_hourly, voll,
+                          xc_to_idx, xc_from_actidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl):
 
 # ========== Explanation ===============================================
 # This function presents a merit order approach to determine prices per
@@ -71,6 +72,53 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
 
         # Save dispatch parameters
         marginal_cost = gen_cost[hours, iG_marginal]
+
+        # Before falling back to VOLL: a node whose own generator fleet can't
+        # meet demand may still have a connected interconnector/transformer
+        # able to close the gap - this only ever matters in an hour that's
+        # already voll_true, so it can never make a normally-clearing hour's
+        # price worse or change which generator sets the marginal price
+        # there. Real generator dispatch (gen_use_hourly below) is untouched
+        # either way - in a genuine shortage every available generator still
+        # runs at full output regardless of whether the residual gap gets
+        # priced at VOLL or at the interconnector's delivered cost; the
+        # interconnector's own actual flow is decided afterwards by
+        # disp_power_interconnectors, using whichever price this resolves to.
+        #
+        # Scoped to the Netherlands' own nodes (elec_is_nl) - every other
+        # country node's own fleet is IESA-Sim's auxiliary representation of
+        # a neighboring market, not something this project is trying to get
+        # right in its own numbers, so those keep the original flat-VOLL
+        # fallback untouched.
+        if voll_true.any() and elec_is_nl[iAk]:
+            iI_here = np.where(xc_to_idx == iAk)[0]
+            if iI_here.size > 0:
+                relief_capacity = -xc_supply[:, iI_here]  # (nH, nR) positive deliverable qty at this node
+                from_prices = prices_hourly[:, xc_from_actidx[iI_here]]  # (nH, nR)
+                # Same delivered-cost convention disp_power_interconnectors.py's
+                # own spread formula already uses (from_price/efficiency - vom).
+                relief_cost = from_prices / xc_efficiencies[iI_here, 0][None, :] - xc_vom[iI_here][None, :]
+
+                relief_order = np.argsort(relief_cost, axis=1, kind='stable')
+                relief_cum = np.cumsum(np.take_along_axis(relief_capacity, relief_order, axis=1), axis=1)
+                gap = demand - MOC_volume_at_last
+                relief_meets = relief_cum >= gap[:, None]
+                relief_any_meets = relief_meets.any(axis=1)
+                relief_last = np.where(relief_any_meets, relief_meets.argmax(axis=1), relief_cost.shape[1] - 1)
+                relief_marginal_cost = np.take_along_axis(relief_cost, relief_order, axis=1)[hours, relief_last]
+
+                # VOLL is the accepted ceiling price for unmet demand - only
+                # prefer interconnector relief over it when relief is actually
+                # cheaper. Without this, an expensive relief option (its own
+                # delivered cost above voll) could still get selected purely
+                # because it physically closes the gap, quietly reporting a
+                # price *above* the ceiling the model is supposed to cap at.
+                resolved = voll_true & relief_any_meets & (relief_marginal_cost <= voll)
+
+                if resolved.any():
+                    marginal_cost = np.where(resolved, relief_marginal_cost, marginal_cost)
+                    voll_true = voll_true & ~resolved
+
         elec_prices_hourly[:, iAk] = np.where(voll_true, voll, marginal_cost)
 
         # Fill dispatch: set all online generators to full availability, then

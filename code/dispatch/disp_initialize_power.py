@@ -52,7 +52,15 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     tech_batteries_coord = np.logical_and.reduce([
         np.array(flexibility_form) == 'Storage', tech_stock > 0, tech_elec_coord
     ])
-    tech_interconnectors_coord = np.array(tech_subsector) == 'XC Trade'
+    # 'Transformer' (dbcompare-backend's own reclassification of same-country
+    # 'XC Trade' technologies - see /unify's post-merge fixup) still needs the
+    # same hourly power-flow/price-spread treatment as genuine cross-border
+    # 'XC Trade' technologies: both move capacity between two priced
+    # electricity nodes, just one crosses a country border and the other a
+    # voltage tier. Only the subsector label differs now (so other code, e.g.
+    # invest_techstocks_def.py's guarantee-availability check, can tell them
+    # apart); dispatch itself treats them identically.
+    tech_interconnectors_coord = np.isin(np.array(tech_subsector), ['XC Trade', 'Transformer'])
     nG = np.sum(tech_generators_coord)
 
     # Preallocate targets
@@ -287,14 +295,21 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     xc_per_elec = np.zeros((nAk, nAk, nI), dtype=bool)
     xc_demand = np.zeros((nH, nI))
     xc_supply = np.zeros((nH, nI))
+    # to/from index arrays for disp_power_generators' own VOLL-avoidance check
+    # (an electricity node whose local generators can't meet demand should
+    # still check whether a connected interconnector/transformer can close
+    # the gap before falling back to VOLL) - preallocated here (not just
+    # inside the nI>0 branch below) so they're valid, empty arrays rather
+    # than undefined names when a dataset has no interconnectors at all.
+    xc_to_idx = np.zeros(nI, dtype=int)
+    xc_from_actidx = np.zeros(nI, dtype=int)
 
     # Interconnector VOM
     xc_vom = vom_cost[tech_interconnectors_coord]
 
     # Identify the to and froms and the efficiencies
     techStock_interconnectors = tech_stock[tech_interconnectors_coord]
-    cap2act_interconnectors = tech_stock[tech_interconnectors_coord] # FIX: both techStock_interconnectors and cap2act_interconnectors are defined in the same way.
-    # Suggested fix by copilot: cap2act_interconnectors = cap2act[tech_interconnectors_coord]
+    cap2act_interconnectors = cap2act[tech_interconnectors_coord]
 
     if nI > 0:
         # Identify the to/from coordinates and efficiencies for every
@@ -311,6 +326,8 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
 
         # Save the links
         xc_per_elec[iAk_to_arr, iAk_from_arr, np.arange(nI)] = True
+        xc_to_idx = iAk_to_arr
+        xc_from_actidx = from_idx_arr
 
         # Efficiency - an interconnector whose activity_balances row has no
         # negative entry at all (from_idx_arr then falls back to argmax's
@@ -338,5 +355,6 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
             loadshifts_demand_hourly, bat_efficiency, bat_capacity, bat_volume,
             bat_per_elec, bat_vom, bat_stock,
             xc_efficiencies, xc_vom, xc_per_elec, xc_demand, xc_supply, elec_cogenerated,
+            xc_to_idx, xc_from_actidx,
             tech_generators_coord, tech_shedding_coord,
             tech_loadshifts_coord, tech_batteries_coord, tech_interconnectors_coord)

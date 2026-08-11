@@ -19,6 +19,14 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
     min_spread = parameters.min_spread
     activities_label = activities.labels
     activities_elec = activities.electricity.names
+    # VOLL-avoidance via interconnector relief (see disp_power_generators.py)
+    # is scoped to the Netherlands' own electricity nodes only - the model's
+    # actual focus. Every other country node (Electricity DE/BE/DK/GB/NO) and
+    # the generic EU pool are IESA-Sim's own auxiliary representations of
+    # neighboring markets, not something this project is trying to get right
+    # in their own numbers; leaving them on the untouched flat-VOLL fallback
+    # keeps their reported prices/investments/emissions exactly as before.
+    elec_is_nl = np.array([name.startswith('Electricity NL') for name in activities_elec])
 
     # Initialize power dispatch
     if nId:
@@ -32,6 +40,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         loadshifts_range, loadshifts_per_elec, loadshifts_demand_hourly,
         bat_efficiency, bat_capacity, bat_volume, bat_per_elec, bat_vom, bat_stock,
         xc_efficiencies, xc_vom, xc_per_elec, xc_demand, xc_supply, elec_cogenerated,
+        xc_to_idx, xc_from_actidx,
         tech_generators_coord, tech_shedding_coord, tech_loadshifts_coord,
         tech_batteries_coord, tech_interconnectors_coord
     ) = disp_initialize_power(dimensions, activities, technologies, profiles, tech_use_hourly, iP)
@@ -54,7 +63,8 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         gen_use_hourly, elec_prices_hourly = disp_power_generators(
             gen_vom, gen_balance_hourly, gen_availability_hourly,
             gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly_new,
-            prices_hourly, voll
+            prices_hourly, voll,
+            xc_to_idx, xc_from_actidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl
         )
 
         # Display iteration info for the last balancing loop

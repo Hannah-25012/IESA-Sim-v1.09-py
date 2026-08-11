@@ -84,7 +84,38 @@ def invest_techstocks_def(dimensions, technologies, tech_stock_original, prelimi
         # workbooks (checked directly), so this only ever matches an
         # Opt-sourced or merged-database technology - zero effect on a
         # native Sim run.
-        if 'Primary' in tech.category or 'XC Trade' in tech.category or tech.subsector == 'Inland generation':
+        #
+        # subsector='Transformer' catches IESA-Opt's own HV<->LV grid
+        # transformers (e.g. "Transformer from LV to HV - Power NL") - a
+        # dbcompare-backend-only reclassification (see /unify's post-merge
+        # fixup) that splits subsector='XC Trade' into genuine cross-border
+        # trade (kept as 'XC Trade') and same-country links like these
+        # transformers (relabeled 'Transformer'), based on each technology's
+        # actual to/from activity nodes rather than trusting the shared Opt
+        # subsector text. IESA-Sim's own model has no HV/LV split at all (a
+        # single "Electricity NL" node, so this subsector value can never
+        # arise from native Sim data either), so like the other two
+        # conditions above this only ever matches an Opt-sourced or
+        # merged-database technology. These have real investment cost data
+        # (unlike Inland generation), but invest_power_technologies.py's own
+        # investment gate is built entirely around POWER GENERATOR economics
+        # (capture rate, normalized utilization factor, cash-flow-based
+        # payback time - see its own condition_1/condition_2) - concepts
+        # that don't apply to a transformer, which doesn't generate or sell
+        # anything, just moves capacity between two price tiers. Without
+        # this, that gate never fires for a transformer (confirmed: capture
+        # rate/utilization factor are generator-only metrics, never
+        # populated for a transformer, so both conditions read as false),
+        # so new_investments for it stays permanently 0 - one merged run
+        # showed "Transformer from LV to HV" stuck at 0 GW installed
+        # capacity forever and "Transformer from HV to LV" decommissioning
+        # from 9 GW to 0 GW with no reinvestment, severing the HV/LV link
+        # entirely and pinning the LV electricity price at a scarcity
+        # ceiling. Treated the same as existing grid capacity, matching how
+        # IESA-Opt's own solver doesn't re-justify import/export capacity
+        # economically either (see the 'XC Trade' comment above).
+        if ('Primary' in tech.category or 'XC Trade' in tech.category or
+                tech.subsector == 'Inland generation' or tech.subsector == 'Transformer'):
             tech_stock[iTb] = tech_stock_max[iTb]
             primary_decommissionings[iTb] = tech_stock_max[iTb]
 
