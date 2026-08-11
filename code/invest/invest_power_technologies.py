@@ -63,7 +63,20 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
 
                     # Determine potential volume ranges for investments accordingly with 1GW to max(1GW,max investment)
                     range_min = 1  # GW
-                    range_max = max(1, tech_stock_deploy[iTb])
+                    # stock_deploy == 0 means "no per-period deploy-rate cap"
+                    # (the same reading as invest_investment_potential.py's
+                    # own `if tech.stock_deploy > 0` check) - deploy up to the
+                    # full remaining headroom rather than being pinned to the
+                    # 1 GW floor. stock_deploy is a Sim-only concept IESA-Opt
+                    # never provides, so an unmatched merged technology has it
+                    # zero-filled; without this a merged generation technology
+                    # can only ever add 1 GW per period, far too slow to
+                    # replace a retiring fleet (native Sim's own technologies
+                    # carry real stock_deploy values and are unaffected).
+                    if tech_stock_deploy[iTb] > 0:
+                        range_max = max(1, tech_stock_deploy[iTb])
+                    else:
+                        range_max = max(1, tech_stock_max[iTb] - tech_stock_exist[iTb])
                     potential_range = range_max - range_min
 
                     # The point in the range will be determined by the actors preferences
