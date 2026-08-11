@@ -60,7 +60,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
     for iIp in range(nIp):
 
         # Dispatch generators
-        gen_use_hourly, elec_prices_hourly = disp_power_generators(
+        gen_use_hourly, elec_prices_hourly, net_available_hourly = disp_power_generators(
             gen_vom, gen_balance_hourly, gen_availability_hourly,
             gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly_new,
             prices_hourly, voll,
@@ -102,7 +102,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
 
         # Dispatch interconnectors
         xc_use_hourly = disp_power_interconnectors(
-            xc_efficiencies, xc_vom, xc_per_elec, elec_prices_hourly
+            xc_efficiencies, xc_vom, xc_per_elec, elec_prices_hourly, xc_demand, net_available_hourly
         )
 
         # Adjust demand for each electricity activity

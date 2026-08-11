@@ -46,6 +46,14 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
     # hours simultaneously.
     gen_use_hourly = np.zeros((nH, nG))
     elec_prices_hourly = np.zeros((nH, nAk))
+    # Local generation capacity minus demand, per node per hour - positive
+    # means this node's own generators have spare capacity beyond its own
+    # demand that hour, negative means they fall short. disp_power_interconnectors.py
+    # uses this to bound how much an interconnector actually delivers (not
+    # more than the receiving node needs, not more than the sending node
+    # can actually spare), instead of dispatching its full nominal capacity
+    # whenever merely profitable to use at all.
+    net_available_hourly = np.zeros((nH, nAk))
     hours = np.arange(nH)
 
     for iAk in range(nAk):
@@ -67,6 +75,12 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
         MOC_last_gen = np.where(any_meets, meets_demand.argmax(axis=1), nG - 1)  # All generators online when voll_true
         MOC_volume_at_last = MOC_volume[hours, MOC_last_gen]
         MOC_excess = np.where(voll_true, 0.0, MOC_volume_at_last - demand)
+        # voll_true already means "even every generator combined can't meet
+        # demand", so MOC_volume_at_last there already is the node's full
+        # local capacity (see MOC_last_gen's own voll_true fallback above) -
+        # this is a genuine shortfall, not an artifact of stopping the merit
+        # order early.
+        net_available_hourly[:, iAk] = MOC_volume_at_last - demand
 
         iG_marginal = MOC_order[hours, MOC_last_gen]
 
@@ -135,4 +149,4 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
         marginal_is_own = mask_gens[iG_marginal]
         gen_use_hourly[hours[marginal_is_own], iG_marginal[marginal_is_own]] -= MOC_excess[marginal_is_own]
 
-    return gen_use_hourly, elec_prices_hourly
+    return gen_use_hourly, elec_prices_hourly, net_available_hourly
