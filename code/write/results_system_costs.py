@@ -36,6 +36,30 @@ def results_system_costs(dimensions, parameters, activities, technologies, resul
 
         # Include Balancing technologies
         for tech in tech_entities:
+            # subsector='Undispatched' (VOLL, Value of Lost Load) and
+            # "Indirect - <gas> <sector>" (IESA-Opt's own baseline non-
+            # energy-GHG accounting) aren't physical capital at all - VOLL is
+            # a scarcity-price placeholder and "Indirect -" technologies just
+            # track what gets emitted before any abatement choice - see
+            # invest_techstocks_def.py's own guaranteed-availability comments
+            # for why their tech_stock is forced to a large, constant value
+            # every period. This capital-cost formula charges an annualized
+            # cost for *holding* tech_stock every period regardless of when
+            # it was built, so forcing a large stock onto an accounting
+            # placeholder charges a large, recurring, entirely fictitious
+            # capital cost for it every single period (confirmed: one merged
+            # run charged 71.7 BEUR for VOLL's stock alone in a single
+            # period - not a one-time investment artifact, since zeroing the
+            # separate technology_investments bookkeeping for these same
+            # technologies left this number completely unchanged). Neither
+            # technology exists in IESA-Sim's own native workbook with a
+            # forced stock this large (VOLL's own native stock_initial is
+            # already its full intended value, and "Indirect -" doesn't
+            # exist there at all), so excluding them here has no native Sim
+            # effect - it only removes a phantom charge unique to
+            # unmatched Opt-sourced accounting placeholders.
+            if tech.subsector == 'Undispatched' or tech.name.startswith('Indirect - '):
+                continue
             system_costs[cost_coord, iP] += annuity_fact[tech.idx] * tech_stock[tech.idx, iP] * inv_cost[tech.idx, iP]
 
         # Include Infrastructure technologies

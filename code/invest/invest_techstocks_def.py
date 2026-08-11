@@ -114,15 +114,80 @@ def invest_techstocks_def(dimensions, technologies, tech_stock_original, prelimi
         # ceiling. Treated the same as existing grid capacity, matching how
         # IESA-Opt's own solver doesn't re-justify import/export capacity
         # economically either (see the 'XC Trade' comment above).
+        # subsector='Undispatched' is IESA-Opt's own VOLL (Value of Lost
+        # Load) accounting technology - a scarcity-price placeholder, not a
+        # real generator anyone invests in. IESA-Sim's own native workbook
+        # already gives its own VOLL technologies (one per country) a
+        # stock_initial set directly to their intended constant value, so
+        # normal investment logic never has anything to do for them
+        # (confirmed: technology_investments shows exactly 0 for every
+        # native VOLL technology in every period). A merged database's
+        # unmatched "Undispatched Electricity (VOLL) - Power NL" instead
+        # gets stock_initial correctly zero-filled (see dbcompare-backend's
+        # own zero-fill fix) but keeps a real, nonzero technology_stocks.max
+        # from period 1 - so normal investment logic sees a gap from 0 to
+        # that max and "invests" into it once, charging a one-time capital
+        # cost for a technology that isn't a physical asset at all (one
+        # merged run: 30 units x 2,389 MEUR/unit = 71.7 BEUR, on its own
+        # roughly 43% of that run's entire period-1 capital cost line).
+        # Guaranteeing it the same way as native Sim's own VOLL technologies
+        # already effectively behave removes that phantom charge.
         if ('Primary' in tech.category or 'XC Trade' in tech.category or
-                tech.subsector == 'Inland generation' or tech.subsector == 'Transformer'):
+                tech.subsector == 'Inland generation' or tech.subsector == 'Transformer' or
+                tech.subsector == 'Undispatched'):
             tech_stock[iTb] = tech_stock_max[iTb]
             primary_decommissionings[iTb] = tech_stock_max[iTb]
 
+            # The comment above ("it does not reflect on investments") isn't
+            # actually true for approved_investments/forced_investments -
+            # both were already computed by the first loop above, from
+            # whatever delta happened between tech_stock_original and the
+            # min/max-clamped tech_stock, before this loop even runs, and
+            # get saved into technologies.balancers.investments regardless
+            # of what this loop does to tech_stock afterwards. Scoped to
+            # 'Undispatched' only (not the Primary/XC Trade/Inland
+            # generation/Transformer conditions above, which predate this
+            # fix and whose own investment bookkeeping also feeds
+            # invest_decommissioning.py and results_policy_cashflows.py -
+            # zeroing it there measurably changes native Sim's own results
+            # for real Primary technologies like "Imported Crude Oil" from
+            # 2030 onward, a materially bigger change than this fix is
+            # meant to make). VOLL's own investment bookkeeping is already
+            # exactly 0 on native Sim (its stock_initial is already its
+            # full constant value there), so zeroing it only ever matters
+            # for a merged database's unmatched VOLL technology, whose
+            # stock_initial is correctly zero-filled but keeps a real,
+            # nonzero technology_stocks.max from period 1 - normal
+            # investment logic sees a gap from 0 to that max and "invests"
+            # into it once, charging a one-time capital cost for a
+            # technology that isn't a physical asset at all (one merged
+            # run: 30 units x 2,389 MEUR/unit = 71.7 BEUR).
+            if tech.subsector == 'Undispatched':
+                approved_investments[iTb, 0] = 0.0
+                forced_investments[iTb, 0] = 0.0
+
         elif 'Emission' in tech.category:
-            if inv_cost[iTb] == 0:
+            # "Indirect - <gas> <sector>" (e.g. "Indirect - CH4 Agriculture")
+            # is IESA-Opt's own baseline non-energy-GHG accounting - tracking
+            # what gets emitted before any abatement choice, not a mitigation
+            # technology itself (contrast "MACC Component ..." nearby, which
+            # genuinely is an abatement decision with real investment
+            # economics). These technologies don't exist in IESA-Sim's own
+            # workbook at all (checked directly - zero native rows for this
+            # name pattern), so this only ever matches an Opt-sourced or
+            # merged-database technology. Every one of them has a nonzero
+            # investment cost in Opt's own data despite being pure
+            # accounting, so the inv_cost==0 branch below never catches
+            # them, and the same zero-stock_initial-but-nonzero-max gap as
+            # 'Undispatched' above charges a phantom capital cost for
+            # baseline emissions tracking that was never a capacity decision.
+            if inv_cost[iTb] == 0 or tech.name.startswith('Indirect - '):
                 tech_stock[iTb] = tech_stock_max[iTb]
                 primary_decommissionings[iTb] = tech_stock_max[iTb]
+                # Same first-loop bookkeeping gap as the guaranteed-
+                # availability branch above - see its own comment.
+                approved_investments[iTb, 0] = 0.0
+                forced_investments[iTb, 0] = 0.0
 
             if 'Emission' in tech.sector:
                 tech_stock[iTb] = 5000
