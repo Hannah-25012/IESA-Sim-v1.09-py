@@ -43,7 +43,15 @@ class Activity:
 
     @property
     def is_emission(self):
-        return self.type == 'Emission'
+        # 'EmissionReport' is IESA-Opt's own report-only type for the same
+        # energy-CO2 activities native Sim types 'Emission' (CO2 Air ETS /
+        # n-ETS / Int. Transport / Feedstock / CCUS Network). Accept it here so
+        # a merged database prices carbon on them, while the merged file keeps
+        # the column as IESA-Opt wrote it (IESA-Opt derives its own sets from
+        # activity_type - retyping in the merge made it infeasible; see
+        # dbcompare-backend/app.py's /unify note). Native Sim has zero
+        # 'EmissionReport' rows, so this never changes a native run.
+        return self.type in ('Emission', 'EmissionReport')
 
     @property
     def is_electricity(self):

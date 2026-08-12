@@ -47,7 +47,10 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     print('--Allocating sets')
     activities_driver = [name for name, typ in zip(activity_names, activity_type_act) if typ == 'Driver']
     activities_energy = [name for name, typ in zip(activity_names, activity_type_act) if typ in ['Energy', 'Fix Energy']]
-    activities_emission = [name for name, typ in zip(activity_names, activity_type_act) if typ == 'Emission']
+    # 'EmissionReport' is IESA-Opt's report-only type for energy-CO2 activities
+    # a merged database carries unchanged (see entities.py:is_emission). Native
+    # Sim has none, so this only ever matters for a merged run.
+    activities_emission = [name for name, typ in zip(activity_names, activity_type_act) if typ in ('Emission', 'EmissionReport')]
 
     # === Identify the electricity activities ===
     activities_elec_coord = np.array(activity_label) == 'Electricity'
