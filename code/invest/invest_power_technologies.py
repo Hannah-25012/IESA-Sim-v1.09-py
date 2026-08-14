@@ -127,9 +127,20 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
                     # B) We use the multiCriteria_performance matrix to obtain an indicator from 0 to 1 for each technology and actor, we then multiply
                     # by the range and its population fraction
 
-                    # Identify population vector of agent type based on agent profile
-                    agent_idx = agent_idx_by_name[own_act.agent_profile_name]
-                    population_vector = agents_populations[agent_idx, :]
+                    # Identify population vector of agent type based on agent profile.
+                    # agent_profile is a Sim-only concept IESA-Opt never provides (see
+                    # mod0_load_duckdb._load_activities) - a merged-only electricity
+                    # activity (e.g. this project's "Electricity NL - HV"/"- LV") has no
+                    # agent profile assigned, so agent_idx_by_name[None] would KeyError.
+                    # Same gap, same fix as invest_tech_choices_per_act.py's own
+                    # agent_idx_by_name.get(...) lookup: split evenly across agent types
+                    # rather than crashing or guessing a single real profile. Every
+                    # technology with a real agent_profile_name is unaffected.
+                    agent_idx = agent_idx_by_name.get(own_act.agent_profile_name)
+                    if agent_idx is not None:
+                        population_vector = agents_populations[agent_idx, :]
+                    else:
+                        population_vector = np.full(nAT, 1.0 / nAT)
                     population_vector = population_vector / np.sum(population_vector)
 
                     # Quantify the interest per agent and add to the investment counter
