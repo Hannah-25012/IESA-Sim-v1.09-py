@@ -4,7 +4,8 @@ import numpy as np
 def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
                           gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly,
                           prices_hourly, voll,
-                          xc_to_idx, xc_from_actidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl):
+                          xc_to_idx, xc_from_actidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl,
+                          shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom):
 
 # ========== Explanation ===============================================
 # This function presents a merit order approach to determine prices per
@@ -19,6 +20,11 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
 #             electricity activity (nH,nAk)
 #          4) gen_per_elec: logical, matrix of generators installed per
 #             electricity activity (nG,nAk)
+#          5) shed_per_elec/shed_maxdemand_hourly/shed_mindemand_hourly/
+#             shed_vom: shedding technologies' own node attachment, hourly
+#             curtailable demand band, and VOM cost - used the same way as
+#             the interconnector arguments below, as an alternate relief
+#             source for a node whose own generator fleet can't meet demand
 #    Output:
 #          1) gen_use_hourly: float, matrix of hourly use per generator
 #             (nH,nG)
@@ -88,16 +94,21 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
         marginal_cost = gen_cost[hours, iG_marginal]
 
         # Before falling back to VOLL: a node whose own generator fleet can't
-        # meet demand may still have a connected interconnector/transformer
+        # meet demand may still have a connected interconnector/transformer,
+        # or a shedding technology able to curtail some of its own demand,
         # able to close the gap - this only ever matters in an hour that's
         # already voll_true, so it can never make a normally-clearing hour's
         # price worse or change which generator sets the marginal price
         # there. Real generator dispatch (gen_use_hourly below) is untouched
         # either way - in a genuine shortage every available generator still
         # runs at full output regardless of whether the residual gap gets
-        # priced at VOLL or at the interconnector's delivered cost; the
-        # interconnector's own actual flow is decided afterwards by
-        # disp_power_interconnectors, using whichever price this resolves to.
+        # priced at VOLL or at a relief source's own cost; each relief
+        # source's own actual flow/curtailment is decided afterwards by
+        # disp_power_interconnectors/disp_power_shedding, using whichever
+        # price this resolves to - so there is no double-booking of the same
+        # relief between this price-only check and that later, independent
+        # dispatch decision (same reasoning as the pre-existing interconnector
+        # check this shedding check is modeled on).
         #
         # Scoped to the Netherlands' own nodes (elec_is_nl) - every other
         # country node's own fleet is IESA-Sim's auxiliary representation of
@@ -106,12 +117,29 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
         # fallback untouched.
         if voll_true.any() and elec_is_nl[iAk]:
             iI_here = np.where(xc_to_idx == iAk)[0]
-            if iI_here.size > 0:
-                relief_capacity = -xc_supply[:, iI_here]  # (nH, nR) positive deliverable qty at this node
-                from_prices = prices_hourly[:, xc_from_actidx[iI_here]]  # (nH, nR)
-                # Same delivered-cost convention disp_power_interconnectors.py's
-                # own spread formula already uses (from_price/efficiency - vom).
-                relief_cost = from_prices / xc_efficiencies[iI_here, 0][None, :] - xc_vom[iI_here][None, :]
+            iS_here = np.where(shed_per_elec[:, iAk])[0]
+            if iI_here.size > 0 or iS_here.size > 0:
+                relief_capacity_parts = []
+                relief_cost_parts = []
+
+                if iI_here.size > 0:
+                    relief_capacity_parts.append(-xc_supply[:, iI_here])  # (nH, nI) positive deliverable qty at this node
+                    from_prices = prices_hourly[:, xc_from_actidx[iI_here]]  # (nH, nI)
+                    # Same delivered-cost convention disp_power_interconnectors.py's
+                    # own spread formula already uses (from_price/efficiency - vom).
+                    relief_cost_parts.append(from_prices / xc_efficiencies[iI_here, 0][None, :] - xc_vom[iI_here][None, :])
+
+                if iS_here.size > 0:
+                    # A shedding technology's own curtailable band this hour -
+                    # how far its demand can drop from shed_maxdemand_hourly
+                    # toward shed_mindemand_hourly - priced at its own VOM,
+                    # the same role xc_vom plays for interconnectors above.
+                    relief_capacity_parts.append(
+                        shed_maxdemand_hourly[:, iS_here] - shed_mindemand_hourly[:, iS_here])
+                    relief_cost_parts.append(np.broadcast_to(shed_vom[iS_here][None, :], (nH, iS_here.size)))
+
+                relief_capacity = np.concatenate(relief_capacity_parts, axis=1)  # (nH, nR)
+                relief_cost = np.concatenate(relief_cost_parts, axis=1)  # (nH, nR)
 
                 relief_order = np.argsort(relief_cost, axis=1, kind='stable')
                 relief_cum = np.cumsum(np.take_along_axis(relief_capacity, relief_order, axis=1), axis=1)
@@ -122,9 +150,9 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
                 relief_marginal_cost = np.take_along_axis(relief_cost, relief_order, axis=1)[hours, relief_last]
 
                 # VOLL is the accepted ceiling price for unmet demand - only
-                # prefer interconnector relief over it when relief is actually
-                # cheaper. Without this, an expensive relief option (its own
-                # delivered cost above voll) could still get selected purely
+                # prefer relief over it when relief is actually cheaper.
+                # Without this, an expensive relief option (its own delivered/
+                # curtailment cost above voll) could still get selected purely
                 # because it physically closes the gap, quietly reporting a
                 # price *above* the ceiling the model is supposed to cap at.
                 resolved = voll_true & relief_any_meets & (relief_marginal_cost <= voll)

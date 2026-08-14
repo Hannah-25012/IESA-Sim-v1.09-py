@@ -19,13 +19,14 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
     min_spread = parameters.min_spread
     activities_label = activities.labels
     activities_elec = activities.electricity.names
-    # VOLL-avoidance via interconnector relief (see disp_power_generators.py)
-    # is scoped to the Netherlands' own electricity nodes only - the model's
-    # actual focus. Every other country node (Electricity DE/BE/DK/GB/NO) and
-    # the generic EU pool are IESA-Sim's own auxiliary representations of
-    # neighboring markets, not something this project is trying to get right
-    # in their own numbers; leaving them on the untouched flat-VOLL fallback
-    # keeps their reported prices/investments/emissions exactly as before.
+    # VOLL-avoidance via interconnector and shedding relief (see
+    # disp_power_generators.py) is scoped to the Netherlands' own electricity
+    # nodes only - the model's actual focus. Every other country node
+    # (Electricity DE/BE/DK/GB/NO) and the generic EU pool are IESA-Sim's own
+    # auxiliary representations of neighboring markets, not something this
+    # project is trying to get right in their own numbers; leaving them on
+    # the untouched flat-VOLL fallback keeps their reported prices/
+    # investments/emissions exactly as before.
     elec_is_nl = np.array([name.startswith('Electricity NL') for name in activities_elec])
 
     # Initialize power dispatch
@@ -35,7 +36,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         gen_vom, gen_balance_hourly, gen_availability_hourly,
         gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly,
         shed_guarantee, shed_maxvolume_hourly, shed_minvolume_hourly, shed_per_elec,
-        shed_maxdemand_hourly, shed_mindemand_hourly, shed_multiplier,
+        shed_maxdemand_hourly, shed_mindemand_hourly, shed_multiplier, shed_vom,
         loadshifts_efficiencies, loadshifts_capacities, loadshifts_min, loadshifts_per_uoa,
         loadshifts_range, loadshifts_per_elec, loadshifts_demand_hourly,
         bat_efficiency, bat_capacity, bat_volume, bat_per_elec, bat_vom, bat_stock,
@@ -64,7 +65,8 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
             gen_vom, gen_balance_hourly, gen_availability_hourly,
             gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly_new,
             prices_hourly, voll,
-            xc_to_idx, xc_from_actidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl
+            xc_to_idx, xc_from_actidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl,
+            shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom
         )
 
         # Display iteration info for the last balancing loop

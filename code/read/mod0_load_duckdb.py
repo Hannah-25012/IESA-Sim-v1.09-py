@@ -208,6 +208,97 @@ def _load_profiles(con, periods):
     return Struct(types=profile_types, shapes=shapes, interconnectors=interconnectors, prices=prices)
 
 
+def _table_exists(con, name):
+    return con.execute(
+        "SELECT count(*) FROM information_schema.tables WHERE table_name = ?", [name]
+    ).fetchone()[0] > 0
+
+
+# IESA-Opt's own workbook carries two side-tables a merged database passes
+# through verbatim (dbcompare-backend/app.py's unify() copies every opt-only
+# table it doesn't otherwise merge) that a native Sim database never has:
+# shed_capacity and flex_capacity, both (tech_id, period) -> already-derived
+# per-unit-capacity ceiling (IESA-Opt's own compute_shed_capacity!/
+# compute_flex_capacity!: raw_percentage * peak(hourly_profile) * cap2act -
+# see julia-backend/src/parameters.jl). Absent entirely from a native Sim
+# database (no read_data_save_duck writer ever creates them), so every call
+# site here is guarded by _table_exists and a no-op when they're missing.
+#
+# The two get treated differently because IESA-Sim's own dispatch treats
+# their raw technologies-table counterpart differently:
+#   - shedding_capacity: disp_initialize_power.py already re-derives the
+#     same ceiling itself (raw_percentage * peak * cap2act, fixed by "Match
+#     IESA-Opt's shed_capacity derivation" 2026-08-10) - re-deriving on top
+#     of shed_capacity's own already-derived value here would double-apply
+#     the peak/cap2act scaling and silently shrink it. So this table is used
+#     for VALIDATION only: recompute Sim's own ceiling from the raw column
+#     and compare, to catch a future drift between the two derivations
+#     instead of silently trusting they still agree.
+#   - flexibility_capacity: disp_initialize_power.py/disp_power_batteries.py/
+#     disp_power_loadshifting.py use it directly as a final per-hour
+#     charge/discharge (or shift) RATE with no derivation step at all - so
+#     for a technology carrying IESA-Opt's raw, undereived percentage (its
+#     technologies.flexibility_capacity is 1.0 for e.g. every merged NL
+#     battery technology, meant to be scaled the same way shedding_capacity
+#     is, but never was), that raw value is silently wrong by orders of
+#     magnitude (verified: PNL03_03 "Battery Storage Daily" carries a raw
+#     1.0 - a full-stock cycle every hour - when IESA-Opt's own derived
+#     value is 0.0036). This one IS overridden with flex_capacity's
+#     already-correct, already-derived value wherever a row exists.
+def _apply_opt_flex_shed_tables(con, tech_df):
+    if _table_exists(con, "shed_capacity"):
+        # Validate only - see the derivation-ownership note above. Compares
+        # Sim's own re-derived ceiling (raw shedding_capacity * profile peak
+        # * cap2act) against IESA-Opt's own already-derived shed_capacity
+        # value for the same (tech, period) and flags any tech where they
+        # disagree by more than a small floating-point tolerance, so a
+        # future change to either derivation doesn't silently drift apart.
+        mismatch = con.execute("""
+            SELECT sc.key1 AS tech_id, sc.key2 AS period, sc.value AS opt_value,
+                   t.shedding_capacity * pk.peak * t.cap2act AS sim_value
+            FROM shed_capacity sc
+            JOIN technologies t ON t.id = sc.key1
+            JOIN (SELECT profile_type, max(value) AS peak FROM hourly_profiles GROUP BY profile_type) pk
+                ON pk.profile_type = t.hourly_profile
+            WHERE abs(t.shedding_capacity * pk.peak * t.cap2act - sc.value)
+                  > 0.02 * abs(sc.value) + 1e-9
+        """).fetchdf()
+        if not mismatch.empty:
+            print(
+                f"!!!! Warning: {len(mismatch)} (tech, period) row(s) where IESA-Sim's own "
+                "re-derived shedding ceiling disagrees with IESA-Opt's shed_capacity table "
+                "by more than 2% - shedding_capacity's derivation may have drifted:"
+            )
+            print(mismatch.to_string(index=False))
+
+    if _table_exists(con, "flex_capacity"):
+        # A tech's flex_capacity value is constant across every period it
+        # appears in for all data seen so far (both raw_percentage and
+        # cap2act are themselves period-invariant technology attributes, and
+        # profile peak doesn't vary by solve period either) - IESA-Sim has no
+        # period dimension for this field to represent per-period variation
+        # even if a future dataset had it, so collapse to one value per tech
+        # by averaging, and flag it loudly if that average is hiding real
+        # spread rather than silently rounding it away.
+        fc = con.execute("SELECT key1 AS tech_id, key2 AS period, value FROM flex_capacity").fetchdf()
+        spread = fc.groupby("tech_id")["value"].agg(["mean", "std"])
+        noisy = spread[spread["std"].fillna(0) > 0.02 * spread["mean"].abs()]
+        if not noisy.empty:
+            print(
+                f"!!!! Warning: {len(noisy)} technology(ies) have period-varying flex_capacity "
+                "IESA-Sim collapses to a single mean value (no period dimension for this field):"
+            )
+            print(noisy.to_string())
+        overrides = spread["mean"].to_dict()
+        applied = tech_df["id"].isin(overrides)
+        if applied.any():
+            tech_df.loc[applied, "flexibility_capacity"] = tech_df.loc[applied, "id"].map(overrides)
+            print(
+                f"----Applied IESA-Opt's own derived flex_capacity to {applied.sum()} "
+                "technology(ies) whose raw flexibility_capacity is an undereived percentage."
+            )
+
+
 def _load_technologies(con, periods, activities_names):
     tech_cols = [
         "id", "category", "sector", "subsector", "name", "unit", "activity", "cap2act", "lifetime",
@@ -232,6 +323,7 @@ def _load_technologies(con, periods, activities_names):
     tech_df = con.execute(f'SELECT {quoted} FROM technologies ORDER BY seq').fetchdf()
     if not has_wacc:
         tech_df["wacc"] = np.nan
+    _apply_opt_flex_shed_tables(con, tech_df)
     tech_balancers = tech_df["id"].tolist()
 
     # Positionally aligned with tech_balancers (None where a tech has no flex

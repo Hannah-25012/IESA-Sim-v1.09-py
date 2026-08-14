@@ -159,6 +159,12 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     shedding_limits_values = shedding_limits[tech_shedding_coord]
     shedding_capacity_values = shedding_capacity[tech_shedding_coord]
 
+    # Shedding VOM - plays the same role for disp_power_generators' own
+    # VOLL-avoidance check (see xc_vom's identical use for interconnectors)
+    # as the delivered cost of curtailing this technology's demand instead
+    # of paying the flat VOLL ceiling for the residual gap.
+    shed_vom = vom_cost[tech_shedding_coord]
+
     # Obtain the min and max profiles
     tech_stock_shedding = tech_stock[tech_shedding_coord]
     cap2act_shedding = cap2act[tech_shedding_coord]
@@ -350,7 +356,7 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     return (gen_vom, gen_balance_hourly, gen_availability_hourly, gen_xc_costs_hourly,
             gen_per_elec, elec_demand_hourly, shedding_guarantee_values, shed_max_volume_hourly,
             shed_min_volume_hourly, shed_per_elec, shed_max_demand_hourly,
-            shed_min_demand_hourly, shed_multiplier, loadshifts_efficiencies, loadshifts_capacities,
+            shed_min_demand_hourly, shed_multiplier, shed_vom, loadshifts_efficiencies, loadshifts_capacities,
             loadshifts_min, loadshifts_per_uoa, loadshifts_range, loadshifts_per_elec,
             loadshifts_demand_hourly, bat_efficiency, bat_capacity, bat_volume,
             bat_per_elec, bat_vom, bat_stock,
