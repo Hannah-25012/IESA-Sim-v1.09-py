@@ -214,6 +214,66 @@ def _table_exists(con, name):
     ).fetchone()[0] > 0
 
 
+# IESA-Opt has no 'Exports' category at all - it tags an export technology
+# 'Primary' just like a genuine import/production technology, distinguishing
+# it only by subsector text (e.g. "Exported Hydrogen" vs "Imported
+# Hydrogen"). IESA-Sim's own native workbook, by contrast, has a real
+# 'Exports' category (11 technologies: Natural Gas/naphtha/road-fuel/
+# kerosene exports, "Export from NL to Power*") that
+# post_primary_energy.py's own export-tracking (`if tech.category ==
+# 'Exports':`) and results_system_costs.py's cost-category bucketing
+# (`coord_fuel = coord_primary` - a 'Primary' tech's own VOM lands in the
+# "fuels" cost bucket unconditionally) are both written assuming.
+#
+# A merged database's Opt-anchored 'Primary' export technology falls
+# through both: it never reaches post_primary_energy.py's 'Exports' branch,
+# so its physical flow never reaches results.exports (the "exporting
+# revenues" system-cost line - confirmed empirically: 0.0 for "Hydrogen HD"
+# in a period where the one such technology, Hyd03_02, dispatched ~1954
+# units of exports), and its own VOM cost instead lands, unconditionally
+# and undiluted, in "fuels" - confirmed: -49.80 EUR/unit x ~1954 units =
+# -97,304 (a large NEGATIVE "fuels" cost, i.e. an unlabelled revenue
+# item hiding inside what should read as a cost line).
+#
+# Checked IESA-Opt's own full native technology set three independent ways
+# (name contains "export", subsector contains "export", and the structural
+# test - a genuine export has a NEGATIVE balance on its own main activity,
+# unlike every other Primary technology, which is positive) - all three
+# agree Hyd03_02 is the only Primary-category technology this affects.
+# "Electricity Export to EU" (PEU01_03) is the only other export-named
+# technology, but it's category='XC Trade', not 'Primary' - deliberately
+# left alone here: invest_techstocks_def.py's own guaranteed-availability
+# check keys off `'XC Trade' in tech.category` specifically (matching how
+# IESA-Opt's own solver treats import/export capacity as existing grid
+# infrastructure rather than re-justifying it economically every period -
+# see that file's own comment) and reclassifying it away from 'XC Trade'
+# would strip that guard, re-exposing it to the same "circular
+# scarcity-pricing trap" this whole investigation started from. Its own
+# export volume is already correctly tracked (confirmed: results.exports
+# for "Electricity NL - HV" is nonzero and grows across periods) via the
+# generic activity-imbalance fallback post_primary_energy.py falls back to
+# for any technology outside the 'Primary'/'Exports' categories - so
+# nothing there needs fixing.
+#
+# Scoped to category == 'Primary' specifically (not "any category") so
+# this can never touch 'XC Trade' or an already-correct native 'Exports'
+# technology - only the exact gap it exists to close.
+def _reclassify_opt_export_technologies(tech_df):
+    is_primary = tech_df["category"] == "Primary"
+    looks_like_export = (
+        tech_df["name"].str.contains("export", case=False, na=False)
+        | tech_df["subsector"].str.contains("export", case=False, na=False)
+    )
+    reclassify = is_primary & looks_like_export
+    if reclassify.any():
+        tech_df.loc[reclassify, "category"] = "Exports"
+        print(
+            f"----Reclassified {reclassify.sum()} IESA-Opt-sourced technology(ies) from "
+            "'Primary' to 'Exports' (IESA-Opt has no 'Exports' category of its own): "
+            f"{tech_df.loc[reclassify, 'id'].tolist()}"
+        )
+
+
 # IESA-Opt's own workbook carries two side-tables a merged database passes
 # through verbatim (dbcompare-backend/app.py's unify() copies every opt-only
 # table it doesn't otherwise merge) that a native Sim database never has:
@@ -323,6 +383,7 @@ def _load_technologies(con, periods, activities_names):
     tech_df = con.execute(f'SELECT {quoted} FROM technologies ORDER BY seq').fetchdf()
     if not has_wacc:
         tech_df["wacc"] = np.nan
+    _reclassify_opt_export_technologies(tech_df)
     _apply_opt_flex_shed_tables(con, tech_df)
     tech_balancers = tech_df["id"].tolist()
 

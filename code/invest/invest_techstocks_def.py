@@ -132,9 +132,32 @@ def invest_techstocks_def(dimensions, technologies, tech_stock_original, prelimi
         # roughly 43% of that run's entire period-1 capital cost line).
         # Guaranteeing it the same way as native Sim's own VOLL technologies
         # already effectively behave removes that phantom charge.
+        #
+        # subsector starting with 'Exported' (past tense - e.g. "Exported
+        # Hydrogen") is IESA-Opt's own convention for an export technology,
+        # distinguished only by subsector text since IESA-Opt has no
+        # 'Exports' category of its own (mod0_load_duckdb.py's
+        # _reclassify_opt_export_technologies retags these from 'Primary' to
+        # 'Exports' for cost-reporting purposes - see that function's own
+        # comment - which would otherwise silently drop them out of this
+        # 'Primary' branch and strip their guaranteed availability, exactly
+        # the same "circular scarcity-pricing trap" the 'XC Trade' comment
+        # above describes for import capacity: confirmed, before this line
+        # was added Hyd03_02's stock collapsed from a guaranteed ~1954 units
+        # in 2050 to 0 from 2030 onward once reclassified). Matched on the
+        # past-tense "Exported" spelling specifically - never "Export"
+        # (present tense, no -ed) - because IESA-Sim's own native workbook
+        # already has real Exports-category technologies of its own (Export
+        # Gas NL / Export Hydrocarbons) that are NOT meant to get this
+        # guaranteed-availability treatment; the past/present tense split is
+        # exactly the line between "this needs the same protection as an
+        # IESA-Opt-anchored import" and "this is IESA-Sim's own competitively-
+        # invested export capacity, leave it alone" - confirmed no subsector
+        # in either source uses the other source's spelling.
         if ('Primary' in tech.category or 'XC Trade' in tech.category or
                 tech.subsector == 'Inland generation' or tech.subsector == 'Transformer' or
-                tech.subsector == 'Undispatched'):
+                tech.subsector == 'Undispatched' or
+                (isinstance(tech.subsector, str) and tech.subsector.startswith('Exported'))):
             tech_stock[iTb] = tech_stock_max[iTb]
             primary_decommissionings[iTb] = tech_stock_max[iTb]
 
