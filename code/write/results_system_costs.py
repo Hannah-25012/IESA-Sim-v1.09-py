@@ -76,8 +76,27 @@ def results_system_costs(dimensions, parameters, activities, technologies, resul
     coord_primary = np.array([tech.category == 'Primary' for tech in tech_entities]).astype(int)
     coord_emissions = np.array([tech.category == 'Emission' for tech in tech_entities]).astype(int)
     coord_external = np.array([tech.category == 'External' for tech in tech_entities]).astype(int)
+    # Exports must also stay out of this bucket, same reasoning as Primary/
+    # Emission/External below: an Exports-category technology's economics
+    # belong entirely in the "exporting revenues" line above, computed from
+    # results.exports (a physical export-flow quantity), never from this
+    # technology's own vom_cost. IESA-Sim's own native Exports technologies
+    # always carry vom_cost == 0 (their revenue is tracked purely via
+    # exporting revenues, never through vom_cost - confirmed directly), so
+    # this was never visibly wrong for native data - leaving Exports out of
+    # this mask was a no-op there. IESA-Opt's own convention puts real
+    # revenue directly into vom_cost, though (e.g. -49.80 EUR/unit for
+    # "Exported Hydrogen" - confirmed), so on a merged database this
+    # omission put the same revenue back into "variable" that
+    # _reclassify_opt_export_technologies had just correctly pulled out of
+    # "fuels" - just relocated to a different wrong bucket, not fixed
+    # (confirmed: -552,124 in "variable" for Hyd03_02 alone in 2050 on a
+    # fresh merge, large enough to flip that period's total system cost
+    # negative).
+    coord_exports = np.array([tech.category == 'Exports' for tech in tech_entities]).astype(int)
     nTb = len(tech_entities)
-    coord_vom = np.ones((nTb, 1)) - coord_primary.reshape(nTb, 1) - coord_emissions.reshape(nTb, 1) - coord_external.reshape(nTb, 1)
+    coord_vom = (np.ones((nTb, 1)) - coord_primary.reshape(nTb, 1) - coord_emissions.reshape(nTb, 1)
+                 - coord_external.reshape(nTb, 1) - coord_exports.reshape(nTb, 1))
     mask_vom = (coord_vom * np.ones((1, nP))) > 0
     system_costs[cost_coord, :] = np.sum(tech_use * vom_cost * mask_vom, axis=0)
 
