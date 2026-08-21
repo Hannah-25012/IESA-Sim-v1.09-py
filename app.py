@@ -95,6 +95,7 @@ if _code_dir not in sys.path:
 from main import main as run_simulation  # noqa: E402  (path setup must run first; also puts code/read/ on sys.path)
 from mod0_read_data_save_duck import mod0_read_data_save_duck  # noqa: E402
 from compat_check import check_sim_compatibility  # noqa: E402
+from handoff_tier1 import seed_from_sim  # noqa: E402  (Tier-1 Sim->Opt stock hand-off; see run-handoff.html)
 
 app = FastAPI()
 app.add_middleware(
@@ -384,6 +385,64 @@ async def upload_input_db(file: UploadFile = File(...)):
         f.write(await file.read())
 
     return {"db_path": dest}
+
+
+# --- Tier-1 Sim->Opt hand-off ------------------------------------------------
+# The run-handoff.html screen chains: run Sim on the merged DB to `handoff`
+# (year_end=handoff, save_state_duckdb=true) -> POST /handoff/extract -> run
+# Opt on the seeded DB. /extract seeds a COPY of the merged DB with Sim's
+# realized stock at the hand-off year (technologies.stock_initial <- Sim, plus
+# the retirement schedule + infra when a full-state Sim DB is present) and sets
+# periods_solve to [handoff .. last]. The seeded DB is downloadable so the
+# screen can hand it to the (separate-container) julia-backend to solve.
+_HANDOFF_DIR = "handoff"
+_handoff_files: dict[str, str] = {}   # token -> seeded db path
+
+
+class HandoffExtractRequest(BaseModel):
+    sim_scenario: str          # a finished Sim run's output/<scenario_name>/ dir
+    merged_db: str             # path returned by POST /input_db (the merged DB to seed)
+    handoff: int = 2030        # Opt's first solved period
+
+
+@app.post("/handoff/extract")
+def handoff_extract(req: HandoffExtractRequest):
+    # Prefer the full-state DB (has infra + decommissioning => the honesty step)
+    # and fall back to the always-written excel DB (stock only) - seed_from_sim
+    # auto-detects which tables each carries.
+    scen_dir = Path("output") / req.sim_scenario
+    state_db = scen_dir / "simulation_state.duckdb"
+    excel_db = scen_dir / "simulation_excel.duckdb"
+    sim_db = state_db if state_db.exists() else excel_db
+    if not sim_db.exists():
+        raise HTTPException(404, f"No Sim output for scenario {req.sim_scenario!r} "
+                                 f"(looked for {excel_db} / {state_db}).")
+    if not os.path.isfile(req.merged_db):
+        raise HTTPException(400, f"merged_db not found: {req.merged_db!r} "
+                                 f"(upload it via POST /input_db first).")
+
+    os.makedirs(_HANDOFF_DIR, exist_ok=True)
+    token = str(uuid.uuid4())
+    out_db = os.path.join(_HANDOFF_DIR, f"{token}_seeded_{req.handoff}.duckdb")
+    try:
+        report = seed_from_sim(str(sim_db), req.merged_db, out_db, req.handoff)
+    except ValueError as e:
+        # Precondition failures (all-zero hand-off year, missing year, ...) are
+        # user-actionable, not server faults - surface the message verbatim.
+        raise HTTPException(400, str(e))
+
+    _handoff_files[token] = out_db
+    return {"token": token, "seeded_db": os.path.basename(out_db), "report": report}
+
+
+@app.get("/handoff/{token}/download")
+def handoff_download(token: str):
+    path = _handoff_files.get(token)
+    if not path or not os.path.isfile(path):
+        raise HTTPException(404, f"No seeded DB for token {token!r} "
+                                 f"(it may have been cleared by a container restart).")
+    return FileResponse(path, media_type="application/octet-stream",
+                        filename=os.path.basename(path))
 
 
 # Excel -> DuckDB conversion only, no solve. Separate from /run's job dict
