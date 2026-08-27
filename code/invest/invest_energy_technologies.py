@@ -14,6 +14,7 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
     shedding_guarantee = technologies.balancers.shedding.guarantee
     techstock_max = technologies.balancers.stocks.max[:, iP]
     tech_choices_lcop_order = technologies.balancers.choices_lcop_order[:, iP]
+    activity_balances = technologies.balancers.activity_balances
 
     # Calculate the shedding adjustment
     coord_shedding_tech = shedding_guarantee > 0
@@ -138,18 +139,41 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
     for activity in activities.entities:
         if energy_scarcity_bin[activity.idx]:
 
-            # Identify possible technologies
-            tech_coord = np.array([t.idx for t in activity.technologies], dtype=int)
+            # Identify possible technologies - producers of this activity
+            # only. activity.technologies (entities.py's link_entities) is
+            # built purely from each technology's own main "activity_name"
+            # field, with no regard for whether it actually produces or
+            # consumes that activity - an Exports-category technology (e.g.
+            # "Exported Hydrogen") lists the very activity it exports as its
+            # own main activity too, with a NEGATIVE activity_balances
+            # coefficient (it removes the activity from the system, it
+            # doesn't supply it). Filtering to a positive coefficient here
+            # keeps this scarcity fallback from ever "investing" in a sink to
+            # fix a supply shortfall - confirmed: without this filter, a
+            # persistent Hydrogen HD gap (its real producer technologies
+            # never became cost-competitive) got "filled" every period by
+            # force-investing in Hyd03_02 (Exported Hydrogen) instead, which
+            # did nothing to relieve the shortage - the same unmet gap then
+            # recurred (and compounded, via the techstock_max overwrite this
+            # fix also removes below) every subsequent period, ratcheting
+            # that one technology's own stock/dispatched use into the
+            # thousands with no physical production ever behind it.
+            tech_coord_all = np.array([t.idx for t in activity.technologies], dtype=int)
+            tech_coord = tech_coord_all[activity_balances[tech_coord_all, activity.idx] > 0]
 
-            # An activity can have an energy gap but no technology at all to fill it
-            # (e.g. an IESA-Sim-side activity name with no matching IESA-Opt-side
-            # technology after a merged-database load - see dbcompare-backend's
-            # /unify - such as "Natural Gas"/"Hydrogen" vs. the technology-bearing
-            # "Natural Gas HD"/"Natural Gas LD" naming) - skip it like the analogous
-            # nT == 0 case in invest_tech_choices_per_act.py, instead of crashing on
-            # np.max of an empty array.
+            # An activity can have an energy gap but no producing technology
+            # at all to fill it - either no technology names it as their main
+            # activity in the first place (e.g. an IESA-Sim-side activity
+            # name with no matching IESA-Opt-side technology after a
+            # merged-database load - see dbcompare-backend's /unify - such as
+            # "Natural Gas"/"Hydrogen" vs. the technology-bearing "Natural Gas
+            # HD"/"Natural Gas LD" naming), or every technology that does is
+            # actually a consumer/exporter of it (just filtered out above) -
+            # skip it like the analogous nT == 0 case in
+            # invest_tech_choices_per_act.py, instead of crashing on np.max
+            # of an empty array.
             if tech_coord.size == 0:
-                print(f"--****There is no technology to cover the energy gap for activity: {activity.name}")
+                print(f"--****There is no producing technology to cover the energy gap for activity: {activity.name}")
                 continue
 
             # Preferences of thoses technologies
@@ -160,10 +184,20 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
             # Identify which technology was chosen
             choice_coord = tech_coord[options_sel]
 
-            # Fill investments and stocks
+            # Fill investments and stocks. techstock_max is deliberately left
+            # untouched here (previously overwritten to match whatever was
+            # just forced in) - that turned a real, exogenous capacity
+            # ceiling into a self-referential bookkeeping artifact that only
+            # ever grew, and fed straight into invest_techstocks_def.py's own
+            # "guaranteed availability" forcing for Primary/Exports/
+            # Undispatched-style technologies (tech_stock = tech_stock_max)
+            # on any later period. If this technology's own real max still
+            # constrains it, invest_techstocks_def.py's normal min/max clamp
+            # brings the forced investment back down to that genuine ceiling
+            # next period - the same honest "can't fully meet this" outcome
+            # the warning above already reports, not a silently expanded one.
             investments[choice_coord] += energy_gap[activity.idx] / cap2act[choice_coord]
             techstock_new[choice_coord] += energy_gap[activity.idx] / cap2act[choice_coord]
-            techstock_max[choice_coord] = techstock_new[choice_coord]
 
     # Calculate energy scarcity
     energy_scarcity_add = np.zeros((nAe,1))
