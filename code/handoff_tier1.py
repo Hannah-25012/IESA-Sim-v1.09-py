@@ -33,8 +33,19 @@ Data path, reverse direction (Opt -> Sim; see seed_from_opt):
                                           # the SAME namespace as merged
                                           # technologies.id, so no sim_id
                                           # bridge or unit conversion needed.
+                                          # julia-backend's ModelSets.technologies
+                                          # is tech_balancers UNION tech_infra
+                                          # (sets.jl:365-376) and infra techs
+                                          # share the SAME techStock JuMP
+                                          # variable (model/infrastructure.jl),
+                                          # so this one table already carries
+                                          # infrastructure rows too - under
+                                          # infrastructure.id, not technologies.id.
   TARGET  a COPY of the merged/Sim input DB, sliced to a two-period leg
       technologies.stock_initial   <- Opt stock @start          # Sim iP==0 seed
+      infrastructure.stock_initial <- Opt stock @start          # same techStock
+                                        table, joined against infrastructure.id
+                                        instead - see SOURCE note above
       technology_stocks.dec_planned <- NULL for periods <= start (already
                                         reflected in the seeded stock; avoids
                                         Opt's own first-period decom_plannedSel
@@ -218,14 +229,22 @@ def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, 
         # --- coverage report (computed before the writes) --------------------
         # Opt's tech id IS the merged DB's technologies.id (both Opt-anchored -
         # see the module docstring), so this join needs no sim_id bridge and
-        # no unit check, unlike the forward direction.
+        # no unit check, unlike the forward direction. Opt's techStock also
+        # carries infrastructure.id rows in the same table (see module
+        # docstring) - a second join against infrastructure covers those.
         matched = con.execute(f"""
             select count(*) from technologies t
             join opt_res.techStock s on s.tech = t.id and s.period = {S}
         """).fetchone()[0]
+        infra_matched = con.execute(f"""
+            select count(*) from infrastructure i
+            join opt_res.techStock s on s.tech = i.id and s.period = {S}
+        """).fetchone()[0]
         opt_only = con.execute(f"""
             select count(distinct s.tech) from opt_res.techStock s
-            where s.period = {S} and s.tech not in (select id from technologies)
+            where s.period = {S}
+              and s.tech not in (select id from technologies)
+              and s.tech not in (select id from infrastructure)
         """).fetchone()[0]
 
         # --- TIER 1 core: seed existing stock from Opt @start ----------------
@@ -233,6 +252,11 @@ def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, 
             update technologies t set stock_initial = s.value
             from opt_res.techStock s
             where s.tech = t.id and s.period = {S}
+        """)
+        con.execute(f"""
+            update infrastructure i set stock_initial = s.value
+            from opt_res.techStock s
+            where s.tech = i.id and s.period = {S}
         """)
 
         # --- re-base planned decommissioning: any event at/before `start` is
@@ -290,11 +314,12 @@ def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, 
             "start": S,
             "harvest": H,
             "seeded_technologies": matched,
+            "seeded_infrastructure": infra_matched,
             "opt_only_ignored": opt_only,
             "dec_planned_cleared": decom_cleared,
             "period_grid": period_grid,
             "prices_fed": prices_fed,
-            "infrastructure_carried": False,  # Opt writes no infra-stock result table
+            "infrastructure_carried": infra_matched > 0,
         }
     finally:
         con.close()
