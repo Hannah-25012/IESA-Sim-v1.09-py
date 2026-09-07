@@ -100,6 +100,13 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
 
     annuity_fact = np.zeros(nTb)
     annuity_fact_infra = np.zeros(nTi)
+    # Exposed alongside annuity_fact (not just used locally) so foresight-aware
+    # LCOP discounting (invest_tech_LCOPs.py) can reuse the exact same
+    # per-technology rate - agent_profile's own discount rate first (a real
+    # Sim-native, per-agent-type time preference), else the technology's own
+    # wacc (Opt-native), else the category-median wacc - instead of
+    # duplicating this fallback chain a second time.
+    discount_rate = np.zeros(nTb)
     for iTb in range(nTb):
         n = ec_lifetime[iTb]
         tech_activity = activity_per_tech[iTb]
@@ -116,6 +123,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
                 f"and no other {tech_categories[iTb]!r}-category technology with a wacc "
                 "to fall back to - cannot determine a discount rate for its annuity factor."
             )
+        discount_rate[iTb] = r
         annuity_fact[iTb] = r / (1 - (1 + r) ** -n)
     for iTi in range(nTi):
         n = ec_lifetime_infra[iTi]
@@ -317,6 +325,7 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     )
     technologies.balancers.flexibility.range_days = flexibility_range_days
     technologies.balancers.costs.annuity = annuity_fact
+    technologies.balancers.costs.discount_rate = discount_rate
     technologies.balancers.lcops = Struct(
         categories=categories_LCOPs,
         values=tech_LCOPs,

@@ -24,6 +24,7 @@ from mod3_dispatch import mod3_dispatch
 from mod4_postprocessing import mod4_postprocessing
 from mod5_results import mod5_results
 from mod6_save_duckdb import save_state_duckdb, save_excel_duckdb
+from datastructures import Struct
 
 def main(settings):
 
@@ -46,6 +47,30 @@ def main(settings):
     save_output = settings['save_output']
     year_end = settings['year_end']
     plot_price_duration = settings['plot_price_duration']
+    # Rolling-horizon foresight - off by default (a single myopic pass,
+    # byte-identical to every run before this setting existed). When on,
+    # run_pass() below is called foresight_passes times: pass 1 is the same
+    # myopic run as always; each pass after that has invest_tech_LCOPs.py
+    # discount each technology's own future fuels/emissions cost using the
+    # PREVIOUS pass's own realized yearly price trajectory as its stand-in
+    # for "the future" - the only concrete future available, since true
+    # future prices don't exist until some pass has already produced them
+    # (see invest_tech_LCOPs.py's own docstring for what this does and
+    # doesn't change, and why). Only the LAST pass's results are kept.
+    #
+    # foresight_source='opt' replaces that self-iteration with a single
+    # already-solved Opt results DB (foresight_from_opt.py): Opt jointly
+    # solves its whole horizon by default, i.e. genuine perfect foresight,
+    # so there is no fixed point to iterate toward - foresight_passes is
+    # forced to 1 and the reference is built once, from Opt, inside pass 1.
+    foresight = settings.get('foresight', False)
+    foresight_source = settings.get('foresight_source', 'sim')
+    foresight_opt_db = settings.get('foresight_opt_db')
+    if foresight_source == 'opt':
+        foresight = True
+        foresight_passes = 1
+    else:
+        foresight_passes = settings.get('foresight_passes', 2) if foresight else 1
     print("Settings were successfully implemented")
 
     # Read the data from the excel input file into the database, if requested.
@@ -59,69 +84,121 @@ def main(settings):
         mod0_read_data_save_duck(input_file, db_path)
         print("The input data was retrieved successfully from the excel file")
 
-    # Either way, the simulation runs off the database, not off dicts built
-    # straight from Excel or off a stale pickle - it's the single source of
-    # truth from here on.
-    print(f"Loading input data from {db_path} ...")
-    parameters, types, activities, profiles, technologies, agents, policies = load_from_duckdb(db_path)
-    print("The input data was successfully loaded from the database")
+    def run_pass(pass_num, foresight_reference):
+        """One full, independent run of the horizon, from a fresh load of
+        db_path, using foresight_reference (or None for the myopic
+        baseline) for every period's LCOP. Fully independent of any other
+        pass - load_from_duckdb/mod1_initialize both build brand new arrays
+        every call, so nothing here can leak state between passes."""
 
-    print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
+        # Either way, the simulation runs off the database, not off dicts
+        # built straight from Excel or off a stale pickle - it's the single
+        # source of truth from here on.
+        print(f"Loading input data from {db_path} ...")
+        parameters, types, activities, profiles, technologies, agents, policies = load_from_duckdb(db_path)
+        print("The input data was successfully loaded from the database")
 
-    # Initialize the simulation
-    print("Initializing the simulation...")
-    dimensions, types, activities, technologies, results = mod1_initialize(
-        settings, types, activities, technologies, agents, policies
-    )
-    print("Initialization complete.")
-
-    # Build the Activity/Technology/Infrastructure object graph (real
-    # cross-references, resolved once here) on top of the now-finalized
-    # arrays, so invest/dispatch/post-processing code can navigate
-    # relationships (tech.activity, activity.technologies, ...) instead of
-    # re-deriving index lists.
-    activity_entities, tech_entities, infra_entities = link_entities(activities, technologies)
-    activities.entities = activity_entities
-    technologies.balancers.entities = tech_entities
-    technologies.infra.entities = infra_entities
-    print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
-
-    # Begin the sequential running of modules for all periods
-    print("Simulation is on...")
-    periods = activities['periods']
-    n_periods = sum(year_end >= periods)
-
-    # Loop through the periods
-    for iP in range(n_periods):
-        print(f"Now solving the period: {periods[iP]}...")
-
-        # Call the invest module
-        print(f"-Determining investments for the period: {periods[iP]}...")
-        activities, technologies = mod2_invest(
-            dimensions, parameters, activities, technologies, agents, policies, iP
-        )
-        print("-Investment module routine complete.")
         print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
-        # Call the energy module
-        print(f"-Determining the operation of technologies for the period: {periods[iP]}...")
-        activities, technologies = mod3_dispatch(
-            dimensions, parameters, activities, technologies, profiles, policies, iP
+        # Initialize the simulation
+        print("Initializing the simulation...")
+        dimensions, types, activities, technologies, results = mod1_initialize(
+            settings, types, activities, technologies, agents, policies
         )
-        print("-Operation of technologies determined.")
+        print("Initialization complete.")
 
-        # Call the post-process module
-        print(f"-Postprocessing parameters for the period: {periods[iP]}...")
-        activities, technologies, results = mod4_postprocessing(
-            dimensions, parameters, types, activities, technologies, profiles, policies, results, iP
-        )
-        print("-Parameters postprocessed.")
-
-        # Message for finalized period
-        print(f"Period {periods[iP]} was finalized.")
+        # Build the Activity/Technology/Infrastructure object graph (real
+        # cross-references, resolved once here) on top of the now-finalized
+        # arrays, so invest/dispatch/post-processing code can navigate
+        # relationships (tech.activity, activity.technologies, ...) instead of
+        # re-deriving index lists.
+        activity_entities, tech_entities, infra_entities = link_entities(activities, technologies)
+        activities.entities = activity_entities
+        technologies.balancers.entities = tech_entities
+        technologies.infra.entities = infra_entities
         print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
-    print("Simulation is over.")
+        # Opt-sourced foresight: build the reference here, on pass 1, the
+        # first point activity names/periods/fallback prices all exist -
+        # unlike the self-iterated case, this reference doesn't change
+        # between periods within the pass (foresight_passes is forced to 1,
+        # so there is no later pass to rebuild it from anyway).
+        if foresight_source == 'opt' and foresight_reference is None:
+            from foresight_from_opt import load_opt_price_reference
+            foresight_reference, opt_coverage = load_opt_price_reference(
+                foresight_opt_db,
+                activities.periods,
+                activities.energies.names,
+                activities.emissions.names,
+                activities.energies.prices.initialized,
+                activities.emissions.prices.initialized,
+            )
+            print(f"Opt-fed foresight coverage: {opt_coverage}")
+
+        # Begin the sequential running of modules for all periods
+        if foresight:
+            print(f"Simulation is on... (foresight pass {pass_num}/{foresight_passes}, "
+                  f"source={foresight_source})")
+        else:
+            print("Simulation is on...")
+        periods = activities['periods']
+        n_periods = sum(year_end >= periods)
+
+        # Loop through the periods
+        for iP in range(n_periods):
+            print(f"Now solving the period: {periods[iP]}...")
+
+            # Call the invest module
+            print(f"-Determining investments for the period: {periods[iP]}...")
+            activities, technologies = mod2_invest(
+                dimensions, parameters, activities, technologies, agents, policies, iP,
+                foresight_reference=foresight_reference
+            )
+            print("-Investment module routine complete.")
+            print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
+
+            # Call the energy module
+            print(f"-Determining the operation of technologies for the period: {periods[iP]}...")
+            activities, technologies = mod3_dispatch(
+                dimensions, parameters, activities, technologies, profiles, policies, iP
+            )
+            print("-Operation of technologies determined.")
+
+            # Call the post-process module
+            print(f"-Postprocessing parameters for the period: {periods[iP]}...")
+            activities, technologies, results = mod4_postprocessing(
+                dimensions, parameters, types, activities, technologies, profiles, policies, results, iP
+            )
+            print("-Parameters postprocessed.")
+
+            # Message for finalized period
+            print(f"Period {periods[iP]} was finalized.")
+            print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
+
+        if foresight:
+            print(f"Foresight pass {pass_num}/{foresight_passes} is over.")
+        else:
+            print("Simulation is over.")
+
+        return dimensions, parameters, types, activities, technologies, profiles, agents, policies, results
+
+    # Pass 1 always starts from foresight_reference=None - with foresight off
+    # (or foresight_source='sim', the self-iterated case) that means plain
+    # myopic, reproducing the pre-foresight behavior exactly; run_pass fills
+    # it in from Opt instead when foresight_source='opt'. Either way
+    # foresight_passes is 1 there, so this loop runs exactly once.
+    reference = None
+    for pass_num in range(1, foresight_passes + 1):
+        (dimensions, parameters, types, activities, technologies, profiles,
+         agents, policies, results) = run_pass(pass_num, reference)
+        if pass_num < foresight_passes:
+            # Captured AFTER the pass completes, when .yearly holds every
+            # period's own realized price (see post_prices.py) - this
+            # becomes "the future" the next pass's LCOP calls look up.
+            reference = Struct(
+                energy_prices=activities.energies.prices.yearly.copy(),
+                emission_prices=activities.emissions.prices.yearly.copy(),
+            )
 
     # Generate the results
     print("Generating the results post-simulation...")

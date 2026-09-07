@@ -1,16 +1,18 @@
 """
-Tier-1 Sim->Opt hand-off: seed an Opt input DB with IESA-Sim's realized stock
-at a hand-off year, so Opt optimizes the remaining path (e.g. 2030 -> 2050) on
-top of the fleet Sim actually built. See the "2030 Handoff" design note.
+Tier-1 Sim<->Opt hand-off: seed one engine's input with the other's realized
+stock at a hand-off year, so the receiving engine continues on top of the
+fleet the other actually built/chose. See the "2030 Handoff" design note.
 
 This is the single implementation shared by:
-  - scratch/extract_tier1.py  (the standalone CLI)
-  - app.py  POST /handoff/extract  (the run-handoff.html screen)
+  - scratch/extract_tier1.py  (the standalone CLI, forward direction only)
+  - app.py  POST /handoff/extract   (Sim -> Opt, the run-handoff.html screen)
+  - app.py  POST /handoff/reverse   (Opt -> Sim, the chained run modes)
 
-Pure-stdlib + duckdb; no IESA-Sim project imports, so it stays importable from
-both the API process and a bare `python scratch/extract_tier1.py`.
+Pure-stdlib + duckdb; no IESA-Sim/IESA-Opt project imports, so it stays
+importable from both the API process and a bare `python scratch/extract_tier1.py`.
 
-Data path (all names live in the merged / Sim-output schemas):
+Data path, forward direction (Sim -> Opt; all names live in the merged /
+Sim-output schemas):
   SOURCE  Sim run output DuckDB
       technology_stock            (tech_id, period, stock)         # per-run excel DB
       technology_stock_evolution  (tech_id, period, stock)         # full-state DB
@@ -24,6 +26,28 @@ Data path (all names live in the merged / Sim-output schemas):
       infrastructure.stock_initial  <- Sim infra stock @handoff
       technology_stocks.dec_planned <- Sim decommissioning, periods > handoff
       periods_solve.value           <- [handoff .. last period]
+
+Data path, reverse direction (Opt -> Sim; see seed_from_opt):
+  SOURCE  Opt results DuckDB (results.duckdb)
+      techStock  (tech, period, value)   # dense, keyed by Opt's own tech id -
+                                          # the SAME namespace as merged
+                                          # technologies.id, so no sim_id
+                                          # bridge or unit conversion needed.
+  TARGET  a COPY of the merged/Sim input DB, sliced to a two-period leg
+      technologies.stock_initial   <- Opt stock @start          # Sim iP==0 seed
+      technology_stocks.dec_planned <- NULL for periods <= start (already
+                                        reflected in the seeded stock; avoids
+                                        Opt's own first-period decom_plannedSel
+                                        re-absorbing it on a later leg)
+      periods                       <- [start, harvest] only, period_order
+                                        renumbered so `start` becomes Sim's
+                                        own iP==0 (see mod0_load_duckdb.py:139
+                                        and main.py's period loop)
+      energy_types."price init"    <- (optional, feed_prices=True) Opt's
+                                        activity_prices @start, per energy
+                                        label - the only lever that reaches
+                                        Sim's next leg (see invest_tech_LCOPs.py,
+                                        consumed only at iP==0)
 """
 import os
 import shutil
@@ -143,6 +167,134 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int) -> dic
             "unit_mismatches": unit_mismatch,
             "duplicate_sim_ids": [{"sim_id": r[0], "opt_rows": r[1]} for r in dupes],
             "full_state_source": "infrastructure_stock_evolution" in sim_tables,
+        }
+    finally:
+        con.close()
+
+
+def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, harvest: int,
+                   feed_prices: bool = False) -> dict:
+    """Write `out_db` = `merged_db` seeded with Opt's realized stock at
+    `start`, sliced to the two-period leg [start, harvest] IESA-Sim needs to
+    warm-start from `start` and build real power capacity by `harvest` (a
+    one-period leg builds none - see mod2_invest.py's `if iP > 0:` gate on
+    power-generation investment).
+
+    Never mutates `merged_db` (works on a copy). Returns a structured report;
+    raises ValueError on a fatal precondition (missing/all-zero start year,
+    start/harvest not both real periods of the merged DB).
+    """
+    for p in (opt_results_db, merged_db):
+        if not os.path.isfile(p):
+            raise ValueError(f"not found: {p}")
+    S, H = int(start), int(harvest)
+    if S >= H:
+        raise ValueError(f"start ({S}) must be before harvest ({H}).")
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_db)), exist_ok=True)
+    shutil.copyfile(merged_db, out_db)
+    con = duckdb.connect(out_db)                       # read-write target
+    try:
+        con.execute(f"ATTACH '{opt_results_db}' AS opt_res (READ_ONLY)")
+        opt_tables = {r[0] for r in con.execute("show tables from opt_res").fetchall()}
+        if "techStock" not in opt_tables:
+            raise ValueError("Opt results DB has no techStock table.")
+
+        # --- guards ---------------------------------------------------------
+        opt_periods = [r[0] for r in con.execute(
+            "select distinct period from opt_res.techStock order by period").fetchall()]
+        if S not in opt_periods:
+            raise ValueError(f"start {S} not in Opt's solved periods {opt_periods}.")
+        start_total = con.execute(
+            f"select coalesce(sum(abs(value)), 0) from opt_res.techStock where period = {S}").fetchone()[0]
+        if start_total == 0:
+            raise ValueError(f"Opt stock at {S} is all-zero - Opt did not solve that period "
+                             f"(or every technology is genuinely at zero capacity there).")
+        db_periods = [r[0] for r in con.execute("select period from periods order by period").fetchall()]
+        missing = [y for y in (S, H) if y not in db_periods]
+        if missing:
+            raise ValueError(f"period(s) {missing} not in the merged DB's own periods {db_periods}.")
+
+        # --- coverage report (computed before the writes) --------------------
+        # Opt's tech id IS the merged DB's technologies.id (both Opt-anchored -
+        # see the module docstring), so this join needs no sim_id bridge and
+        # no unit check, unlike the forward direction.
+        matched = con.execute(f"""
+            select count(*) from technologies t
+            join opt_res.techStock s on s.tech = t.id and s.period = {S}
+        """).fetchone()[0]
+        opt_only = con.execute(f"""
+            select count(distinct s.tech) from opt_res.techStock s
+            where s.period = {S} and s.tech not in (select id from technologies)
+        """).fetchone()[0]
+
+        # --- TIER 1 core: seed existing stock from Opt @start ----------------
+        con.execute(f"""
+            update technologies t set stock_initial = s.value
+            from opt_res.techStock s
+            where s.tech = t.id and s.period = {S}
+        """)
+
+        # --- re-base planned decommissioning: any event at/before `start` is
+        # already reflected in the seeded stock (mirrors seed_from_sim's own
+        # "period > H" convention above, going the other way) - leaving it in
+        # would have Opt's own first-solved-period decom_plannedSel absorption
+        # (parameters.jl's lower_excl = typemin(Int)) re-retire it a second
+        # time on a later leg. Sim itself doesn't read this column (only Opt
+        # does), so clearing it here is harmless to the upcoming Sim leg and
+        # only matters for whatever Opt leg reads this DB next. ---
+        decom_cleared = con.execute(
+            f"select count(*) from technology_stocks where dec_planned is not null and period <= {S}"
+        ).fetchone()[0]
+        con.execute(f"update technology_stocks set dec_planned = NULL where period <= {S}")
+
+        # --- slice the period grid to this leg: IESA-Sim takes its period
+        # vector straight from this table (mod0_load_duckdb.py:139), ordered
+        # by period_order, and reindexes every per-period array against it -
+        # so restricting to [S, H] and renumbering makes S become iP==0. ---
+        con.execute(f"delete from periods where period < {S} or period > {H}")
+        con.execute("""
+            update periods set period_order = sub.new_order
+            from (select period, row_number() over (order by period) - 1 as new_order
+                  from periods) sub
+            where periods.period = sub.period
+        """)
+        period_grid = [r[0] for r in con.execute(
+            "select period from periods order by period_order").fetchall()]
+
+        # --- optional price feedback (bidirectional chained mode): Sim has no
+        # input table for realized per-period prices, only a per-energy-label
+        # initial-price scalar consumed exclusively at iP==0
+        # (energy_types."price init" -> mod0_load_duckdb.py:101-102 ->
+        # invest_tech_LCOPs.py's iP==0 branch) - the one lever that actually
+        # reaches Sim's next leg. ---
+        prices_fed = 0
+        if feed_prices and "activity_prices" in opt_tables:
+            has_energy_types = con.execute(
+                "select count(*) from information_schema.tables where table_name = 'energy_types'"
+            ).fetchone()[0] > 0
+            if has_energy_types:
+                con.execute(f"""
+                    update energy_types et set "price init" = p.price
+                    from opt_res.activity_prices p
+                    join activities a on a."Name" = p.activity
+                    where a.energy_label = et.labels and p.period = {S}
+                """)
+                prices_fed = con.execute(f"""
+                    select count(distinct et.labels) from energy_types et
+                    join activities a on a.energy_label = et.labels
+                    join opt_res.activity_prices p on p.activity = a."Name" and p.period = {S}
+                """).fetchone()[0]
+
+        return {
+            "start": S,
+            "harvest": H,
+            "seeded_technologies": matched,
+            "opt_only_ignored": opt_only,
+            "dec_planned_cleared": decom_cleared,
+            "period_grid": period_grid,
+            "prices_fed": prices_fed,
+            "infrastructure_carried": False,  # Opt writes no infra-stock result table
         }
     finally:
         con.close()

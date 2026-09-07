@@ -15,8 +15,8 @@ from invest_power_technologies import invest_power_technologies
 from invest_techstocks_def import invest_techstocks_def
 from invest_decommissioning import invest_decommissioning
 
-def mod2_invest(dimensions, parameters, activities, technologies, agents, policies, iP):
-    
+def mod2_invest(dimensions, parameters, activities, technologies, agents, policies, iP, foresight_reference=None):
+
     # Extract parameters
     if iP > 0:
         tech_stock_exist = technologies.balancers.stocks.evolution[:, iP - 1]
@@ -50,7 +50,8 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
     # === Obtain the technology LCOPs of the period ===
     print("--Obtaining LCOPs of technologies...")
     technologies = invest_tech_LCOPs(
-        dimensions, activities, technologies, policies, retrofit_potential, retrofit_cost, iP
+        dimensions, activities, technologies, policies, retrofit_potential, retrofit_cost, iP,
+        foresight_reference=foresight_reference
     )
 
     # === Call the multi criteria performance function ===

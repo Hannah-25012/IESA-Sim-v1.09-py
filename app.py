@@ -95,7 +95,7 @@ if _code_dir not in sys.path:
 from main import main as run_simulation  # noqa: E402  (path setup must run first; also puts code/read/ on sys.path)
 from mod0_read_data_save_duck import mod0_read_data_save_duck  # noqa: E402
 from compat_check import check_sim_compatibility  # noqa: E402
-from handoff_tier1 import seed_from_sim  # noqa: E402  (Tier-1 Sim->Opt stock hand-off; see run-handoff.html)
+from handoff_tier1 import seed_from_sim, seed_from_opt  # noqa: E402  (Tier-1 Sim<->Opt stock hand-off; see run-handoff.html)
 
 app = FastAPI()
 app.add_middleware(
@@ -183,6 +183,24 @@ _DEFAULT_SETTINGS = {
     # (see main.py). Off by default; pass true to opt back in for offline
     # analysis outside this API.
     "save_state_duckdb": False,
+    # Rolling-horizon foresight (see main.py's run_pass/foresight_reference
+    # and invest_tech_LCOPs.py's own docstring). Off by default - a single
+    # myopic pass, byte-identical to pre-foresight behavior. When true, the
+    # horizon is re-run foresight_passes times total, each pass after the
+    # first discounting each technology's future fuels/emissions cost using
+    # the PREVIOUS pass's own realized price trajectory - costs
+    # foresight_passes times the runtime of a normal run.
+    "foresight": False,
+    "foresight_passes": 2,
+    # 'sim' (default): the self-iterated foresight above. 'opt': replace it
+    # with a single already-solved Opt results DB (see main.py's
+    # foresight_from_opt import and code/foresight_from_opt.py) - genuine
+    # perfect foresight rather than a fixed-point iteration, at the cost of
+    # needing that separate Opt solve to exist first. foresight_opt_db is
+    # a path returned by POST /input_db (the same generic upload endpoint
+    # the Sim/Opt hand-off modes already reuse).
+    "foresight_source": "sim",
+    "foresight_opt_db": None,
 }
 
 
@@ -198,6 +216,14 @@ def _build_settings(overrides: Optional[dict]) -> dict:
             raise HTTPException(400, f"Unknown input field(s): {sorted(unknown)}")
         merged.update(overrides)
 
+    if merged["foresight_source"] not in ("sim", "opt"):
+        raise HTTPException(400, f"foresight_source must be 'sim' or 'opt', got {merged['foresight_source']!r}")
+    if merged["foresight_source"] == "opt":
+        if not merged["foresight_opt_db"]:
+            raise HTTPException(400, "foresight_source='opt' requires foresight_opt_db (a path from POST /input_db)")
+        if not os.path.isfile(merged["foresight_opt_db"]):
+            raise HTTPException(400, f"foresight_opt_db not found: {merged['foresight_opt_db']}")
+
     return {
         "input": os.path.join("input", merged["file_name"]),
         "scenario_name": merged["scenario_name"],
@@ -212,6 +238,10 @@ def _build_settings(overrides: Optional[dict]) -> dict:
         },
         "year_end": merged["year_end"],
         "save_state_duckdb": merged["save_state_duckdb"],
+        "foresight": merged["foresight"],
+        "foresight_passes": merged["foresight_passes"],
+        "foresight_source": merged["foresight_source"],
+        "foresight_opt_db": merged["foresight_opt_db"],
     }
 
 
@@ -387,14 +417,22 @@ async def upload_input_db(file: UploadFile = File(...)):
     return {"db_path": dest}
 
 
-# --- Tier-1 Sim->Opt hand-off ------------------------------------------------
-# The run-handoff.html screen chains: run Sim on the merged DB to `handoff`
-# (year_end=handoff, save_state_duckdb=true) -> POST /handoff/extract -> run
-# Opt on the seeded DB. /extract seeds a COPY of the merged DB with Sim's
-# realized stock at the hand-off year (technologies.stock_initial <- Sim, plus
-# the retirement schedule + infra when a full-state Sim DB is present) and sets
-# periods_solve to [handoff .. last]. The seeded DB is downloadable so the
-# screen can hand it to the (separate-container) julia-backend to solve.
+# --- Tier-1 Sim<->Opt hand-off -----------------------------------------------
+# The run-handoff.html screen's single-hand-off pipeline chains: run Sim on the
+# merged DB to `handoff` (year_end=handoff, save_state_duckdb=true) -> POST
+# /handoff/extract -> run Opt on the seeded DB. /extract seeds a COPY of the
+# merged DB with Sim's realized stock at the hand-off year (technologies.
+# stock_initial <- Sim, plus the retirement schedule + infra when a full-state
+# Sim DB is present) and sets periods_solve to [handoff .. last]. The seeded DB
+# is downloadable so the screen can hand it to the (separate-container)
+# julia-backend to solve.
+#
+# The chained run modes alternate this with the reverse direction:
+# /handoff/reverse seeds a COPY of the merged DB with Opt's realized stock at
+# `start` (technologies.stock_initial <- Opt, keyed by Opt's own tech id - no
+# sim_id bridge needed, see handoff_tier1.py's module docstring), sliced to
+# the two-period leg [start, harvest] Sim needs to build real capacity again.
+# Both seeded DBs are downloaded the same way, via GET /handoff/{token}/download.
 _HANDOFF_DIR = "handoff"
 _handoff_files: dict[str, str] = {}   # token -> seeded db path
 
@@ -433,6 +471,55 @@ def handoff_extract(req: HandoffExtractRequest):
 
     _handoff_files[token] = out_db
     return {"token": token, "seeded_db": os.path.basename(out_db), "report": report}
+
+
+class HandoffReverseRequest(BaseModel):
+    opt_results: str            # path to an Opt results.duckdb, via POST /input_db
+    merged_db: str               # path to the (pristine) merged DB to seed, via POST /input_db
+    start: int                    # the Opt period whose stock seeds Sim's next leg
+    harvest: int                   # Sim's year_end for that leg (the leg's other endpoint)
+    feed_prices: bool = False      # also seed energy_types."price init" from Opt's
+                                    # activity_prices @start (bidirectional chained mode)
+
+
+@app.post("/handoff/reverse")
+def handoff_reverse(req: HandoffReverseRequest):
+    if not os.path.isfile(req.opt_results):
+        raise HTTPException(400, f"opt_results not found: {req.opt_results!r} "
+                                 f"(upload it via POST /input_db first).")
+    if not os.path.isfile(req.merged_db):
+        raise HTTPException(400, f"merged_db not found: {req.merged_db!r} "
+                                 f"(upload it via POST /input_db first).")
+
+    os.makedirs(_HANDOFF_DIR, exist_ok=True)
+    token = str(uuid.uuid4())
+    out_db = os.path.join(_HANDOFF_DIR, f"{token}_seeded_{req.start}_{req.harvest}.duckdb")
+    try:
+        report = seed_from_opt(req.opt_results, req.merged_db, out_db, req.start, req.harvest, req.feed_prices)
+    except ValueError as e:
+        # Precondition failures (all-zero start year, missing period, ...) are
+        # user-actionable, not server faults - surface the message verbatim.
+        raise HTTPException(400, str(e))
+
+    _handoff_files[token] = out_db
+    return {"token": token, "seeded_db": os.path.basename(out_db), "report": report}
+
+
+# Lets the frontend populate a hand-off/leg year picker from the merged DB's
+# own periods, rather than a free-form number input that could name a year
+# the database doesn't actually have.
+@app.get("/handoff/periods")
+def handoff_periods(db_path: str):
+    if not os.path.isfile(db_path):
+        raise HTTPException(400, f"db_path not found: {db_path!r} (upload it via POST /input_db first).")
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        periods = [r[0] for r in con.execute("select period from periods order by period").fetchall()]
+    except duckdb.Error as e:
+        raise HTTPException(400, f"Could not read periods from {db_path!r}: {e}")
+    finally:
+        con.close()
+    return {"periods": periods}
 
 
 @app.get("/handoff/{token}/download")
