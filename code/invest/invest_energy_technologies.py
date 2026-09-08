@@ -13,6 +13,7 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
     cap2act = technologies.balancers.cap2acts
     shedding_guarantee = technologies.balancers.shedding.guarantee
     techstock_max = technologies.balancers.stocks.max[:, iP]
+    stock_deploy = technologies.balancers.stocks.deploy
     tech_choices_lcop_order = technologies.balancers.choices_lcop_order[:, iP]
     activity_balances = technologies.balancers.activity_balances
 
@@ -65,6 +66,27 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                     if remaining_gap > 0:
                         tech_room = (techstock_max[tech_coord].flatten() - techstock_exist[tech_coord].flatten() -
                                      valid_investments.flatten())
+                        # BUGFIX: this "fill the remaining gap" tier previously
+                        # ignored stock_deploy entirely, bounded only by
+                        # techstock_max - so a technology with stock_deploy>0
+                        # (a real per-period build-rate cap, respected by
+                        # valid_investments above via investment_potential)
+                        # could still be force-invested straight up to its
+                        # TOTAL ceiling the moment a scarcity gap exceeded
+                        # that pace, defeating the cap's whole purpose exactly
+                        # when it matters most (a sudden gap, e.g. a retiring
+                        # technology). Layer the same per-period pace limit on
+                        # top of techstock_max here: sd_room tracks how much
+                        # of THIS period's stock_deploy allowance is left
+                        # after what this function has already committed
+                        # (investments, from prior iI passes) plus this
+                        # iteration's own valid_investments tier. stock_deploy
+                        # <= 0 keeps the documented "no pacing" behavior
+                        # (sd_room = +inf, techstock_max stays the only cap).
+                        sd_tech = stock_deploy[tech_coord]
+                        sd_used = investments[tech_coord, 0] + valid_investments.flatten()
+                        sd_room = np.where(sd_tech > 0, np.maximum(0.0, sd_tech - sd_used), np.inf)
+                        tech_room = np.minimum(tech_room, sd_room)
                         tech_room = np.round(tech_room, decimals=precision)
                         cand_availability = tech_room > 0
                         order_search = tech_choices_lcop_order[tech_coord]
@@ -92,6 +114,13 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                                 # Check for other technologies that were not chosen by agents
                                 tech_room_others = (techstock_max[tech_coord] - techstock_exist[tech_coord].ravel() -
                                                     valid_investments.ravel() - fill_investments.ravel())
+                                # Same stock_deploy layering as the main fill
+                                # loop above - this fallback tier would
+                                # otherwise bypass the pace cap too.
+                                sd_used_others = (investments[tech_coord, 0] + valid_investments.ravel() +
+                                                   fill_investments.ravel())
+                                sd_room_others = np.where(sd_tech > 0, np.maximum(0.0, sd_tech - sd_used_others), np.inf)
+                                tech_room_others = np.minimum(tech_room_others, sd_room_others)
                                 if np.sum(tech_room_others) > 0:
                                     for iT in range(nT):
                                         other_investments[iT] = max(
