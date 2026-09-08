@@ -142,7 +142,8 @@ class Technology:
 
 class Infrastructure:
     def __init__(self, idx, id_, category, name, unit, activity_name,
-                 cap2act, lifetime, stock_initial, costs_investment, costs_fom):
+                 cap2act, lifetime, stock_initial, stock_min, stock_max,
+                 costs_investment, costs_fom):
         self.idx = idx
         self.id = id_
         self.category = category
@@ -155,6 +156,8 @@ class Infrastructure:
         self.cap2act = cap2act
         self.lifetime = lifetime
         self.stock_initial = stock_initial
+        self.stock_min = stock_min                # view: 1D over periods
+        self.stock_max = stock_max                # view: 1D over periods
         self.costs_investment = costs_investment  # view: 1D over periods
         self.costs_fom = costs_fom                # view: 1D over periods
 
@@ -245,6 +248,7 @@ def link_entities(activities, technologies):
             activity_name=infra.activity[i],
             cap2act=infra.cap2acts[i], lifetime=infra.costs.lifetimes[i],
             stock_initial=infra.stocks.initial[i],
+            stock_min=infra.stocks.min[i, :], stock_max=infra.stocks.max[i, :],
             costs_investment=infra.costs.investments[i, :], costs_fom=infra.costs.foms[i, :],
         ))
     for infra_obj in infra_list:

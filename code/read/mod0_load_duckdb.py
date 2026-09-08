@@ -489,6 +489,28 @@ def _load_technologies(con, periods, activities_names):
     inv_cost_infra = _pivot_carry(infra_costs_df, "infra_id", tech_infra, "period", periods, "investment")
     fom_cost_infra = _pivot_carry(infra_costs_df, "infra_id", tech_infra, "period", periods, "fom")
 
+    # infrastructure_stocks (IESA-Opt's own per-period min/max/dec_planned
+    # ceiling for infra entities, mirroring technology_stocks above) is NOT
+    # one of compat_check.py's _SIM_DUCKDB_TABLES - a native Sim workbook has
+    # never carried this table (mod0_read_data_save_duck.py never writes it),
+    # only a merged/Opt-sourced DB does. Treat its absence exactly like
+    # IESA-Opt itself treats a missing (infra, period) row: no constraint
+    # recorded, not a zeroed one - max defaults to +inf, not 0, so a native
+    # run's infrastructure build-out is completely unaffected by this.
+    infra_stocks_table_exists = con.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'infrastructure_stocks'"
+    ).fetchone()[0] > 0
+    if infra_stocks_table_exists:
+        infra_stocks_df = con.execute(
+            "SELECT infra_id, period, dec_planned, min, max FROM infrastructure_stocks").fetchdf()
+        infra_stock_dec = _pivot(infra_stocks_df, "infra_id", tech_infra, "period", periods, "dec_planned")
+        infra_stock_min = _pivot_carry(infra_stocks_df, "infra_id", tech_infra, "period", periods, "min")
+        infra_stock_max = _pivot_carry(infra_stocks_df, "infra_id", tech_infra, "period", periods, "max")
+    else:
+        infra_stock_dec = np.zeros((len(tech_infra), len(periods)))
+        infra_stock_min = np.zeros((len(tech_infra), len(periods)))
+        infra_stock_max = np.full((len(tech_infra), len(periods)), np.inf)
+
     infra = Struct(
         ids=tech_infra,
         categories=infra_df["category"].tolist(),
@@ -500,7 +522,10 @@ def _load_technologies(con, periods, activities_names):
             lifetimes=infra_df["lifetime"].to_numpy(dtype=float),
         ),
         cap2acts=infra_df["cap2act"].to_numpy(dtype=float),
-        stocks=Struct(initial=infra_df["stock_initial"].to_numpy(dtype=float)),
+        stocks=Struct(
+            initial=infra_df["stock_initial"].to_numpy(dtype=float),
+            dec_planned=infra_stock_dec, min=infra_stock_min, max=infra_stock_max,
+        ),
     )
 
     # Same period-repetition as energy_balance above (see
