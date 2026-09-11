@@ -64,7 +64,12 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
             LCOP_min = np.min(LCOP_vec)
             LCOP_max = LCOP_min + 0.5 * abs(LCOP_min) + 1e-6
             emissions_min = np.min(emissions_vec)
-            emissions_max = max(emissions_vec[0], 0) + 1e-6
+            # BUGFIX: this used to be emissions_vec[0] (whichever technology
+            # happens to be first in activity.technologies' build order) -
+            # not the worst competitor, just an arbitrary one. A true min-max
+            # normalization needs the actual maximum among the technologies
+            # actually competing for this activity.
+            emissions_max = max(np.max(emissions_vec), 0) + 1e-6
 
             # Calculate the decreasing linear functions from 1 to 0
             # For emissions
