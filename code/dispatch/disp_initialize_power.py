@@ -29,8 +29,6 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     # Each hourly profile type's shape, resolved once instead of re-scanning
     # profile_type for every technology that uses it.
     profile_shape_by_type = {name: hourly_profiles[:, i] for i, name in enumerate(profile_type)}
-    interconnector = profiles.interconnectors
-    price_profiles = profiles.prices[:, :, iP]
 
     # === Obtain figures for power dispatch ===
     # Identify generators, shedders, and interconnectors
@@ -100,7 +98,6 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     generator_techs = [t for t in tech_entities if tech_generators_coord[t.idx]]
     gen_vom = vom_cost[tech_generators_coord]
     tech_subsector = np.array(tech_subsector)
-    generators_subsector = tech_subsector[tech_generators_coord]
     activity_balance_gen = activity_balances[tech_generators_coord, :]
     generators_activity = tech_stock[tech_generators_coord] * cap2act[tech_generators_coord]
 
@@ -123,19 +120,18 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     gen_profile_matrix = np.column_stack([profile_shape_by_type[gen.profile] for gen in generator_techs])  # (nH, nG)
     gen_availability_hourly[:, :] = gen_profile_matrix * generators_activity[None, :]
 
-    # Get the hourly variable costs of the generators. This branch is dead in
-    # the current data (see NOTE below) but kept as its own small per-generator
-    # loop rather than vectorized away, since vectorizing dead code risks
-    # hiding it entirely instead of leaving it visibly fixable.
-    for iG, gen in enumerate(generator_techs):
-        if generators_subsector[iG] == 'Inland generation':  # Interconnectors
-            elec_generated = gen.activity.name
-            # NOTE: `interconnector` is a plain list, so this comparison never
-            # matches (a list is never == a string) - this branch is dead in
-            # the current data, preserved as-is rather than silently "fixed".
-            if np.sum(interconnector == elec_generated) > 0:
-                coord_IC = (interconnector == elec_generated)
-                gen_xc_costs_hourly[:, iG] = price_profiles[:, coord_IC]
+    # gen_xc_costs_hourly stays all-zero: it used to be populated here for
+    # 'Inland generation' generators via an interconnector-price lookup, but
+    # that lookup compared profiles.interconnectors (a plain list) to a str
+    # with `==`, which is unconditionally False - the branch never ran for
+    # any dataset. Confirmed via a real A/B run (repairing the comparison
+    # to be element-wise) that this is NOT behaviour-neutral - it does
+    # change energy_prices/hourly_power_prices - but leaves system_costs
+    # and system_emissions bit-identical across the full 2022-2050 horizon.
+    # Removed as dead code; the repaired form and its measured impact are
+    # kept on branch experiment/interconnector-price-fix (commit aba6bb4)
+    # if this pricing behaviour is ever wanted as a deliberate modelling
+    # change instead.
 
     # Obtain the hourly activity balances for every generator at once
     gen_balance_hourly[:, :, :] = np.broadcast_to(activity_balance_gen.T, (nH, nA, nG))
