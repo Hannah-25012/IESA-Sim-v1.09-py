@@ -15,7 +15,8 @@ from invest_power_technologies import invest_power_technologies
 from invest_techstocks_def import invest_techstocks_def
 from invest_decommissioning import invest_decommissioning
 
-def mod2_invest(dimensions, parameters, activities, technologies, agents, policies, iP, foresight_reference=None):
+def mod2_invest(dimensions, parameters, activities, technologies, agents, policies, iP, foresight_reference=None,
+                 frozen_mix=False):
 
     # Extract parameters
     if iP > 0:
@@ -62,14 +63,20 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
 
     # === Call the technology choices function ===
     print("--Determining technology choices per agent populations...")
+    # tech_stock_new here is this period's stock net of its own planned
+    # decommissioning but before any new investment - the right basis for
+    # frozen_mix's "current fleet shares", matching what invest_drivers/
+    # energy_sufficiency above used to size the gap being filled.
     technologies, tech_choices = invest_tech_choices_per_act(
-        dimensions, activities, technologies, agents, iP
+        dimensions, activities, technologies, agents, iP,
+        tech_stock=tech_stock_new, frozen_mix=frozen_mix
     )
 
     # === Determine the new stocks, the old stocks ===
     print("--Determining the required investments to meet driver activities volumes...")
     tech_stock_new, investments_drivers = invest_driver_technologies(
-        dimensions, activities, technologies, tech_stock_new, investment_potential, activity_gap, tech_choices, iP
+        dimensions, activities, technologies, tech_stock_new, investment_potential, activity_gap, tech_choices, iP,
+        frozen_mix=frozen_mix
     )
 
     # === Check if there are negative investments ===
@@ -86,7 +93,8 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
     # === Invest in nonER-GHG emission technologies ===
     print("--Determining the required investments to mitigate non-energy related GHG...")
     tech_stock_new, investments_nerghg = invest_nerghg_technologies(
-        dimensions, activities, technologies, tech_stock_new, investment_potential, tech_choices, iP
+        dimensions, activities, technologies, tech_stock_new, investment_potential, tech_choices, iP,
+        frozen_mix=frozen_mix
     )
 
     # === Invest in CCUS technologies ===
@@ -98,7 +106,8 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
     # === Determine the energy investments ===
     print("--Determining the required investments to satisfy energy activities...")
     technologies, activities, tech_stock_new, investments_energy = invest_energy_technologies(
-        dimensions, activities, technologies, tech_stock_new, investment_potential, tech_choices, iP
+        dimensions, activities, technologies, tech_stock_new, investment_potential, tech_choices, iP,
+        frozen_mix=frozen_mix
     )
 
     # Check if there are negative investments
@@ -110,7 +119,8 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
     if iP > 0:
         print("--Investing in power generation technologies...")
         investments_power = invest_power_technologies(
-            dimensions, parameters, activities, technologies, agents, tech_stock_new, iP
+            dimensions, parameters, activities, technologies, agents, tech_stock_new, iP,
+            frozen_mix=frozen_mix
         )
     else:
         investments_power = np.zeros_like(investments_energy)

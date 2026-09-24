@@ -1,7 +1,8 @@
 # File to determine actors' technology choices
 import numpy as np
 
-def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP):
+def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP,
+                                 tech_stock=None, frozen_mix=False):
 
     # Extract parameters
     nTb = dimensions['nTb']
@@ -66,6 +67,18 @@ def invest_tech_choices_per_act(dimensions, activities, technologies, agents, iP
 
         elif nT == 1:
             tech_choices_agent[coord_tech, :] = population_vector
+
+        elif frozen_mix and tech_stock is not None and tech_stock[coord_tech].sum() > 0:
+            # Frozen-mix scenario: split new/replacement capacity in the same
+            # proportions as this activity's OWN currently-installed stock,
+            # instead of ranking competitors by multicriteria/LCOP below - a
+            # "nothing changes, expired capacity gets replaced like-for-like"
+            # baseline. Only applies once the activity actually has stock to
+            # freeze; a brand-new activity/technology with zero current stock
+            # has no existing mix to preserve, so it falls through to the
+            # normal multicriteria selection to get a first, sensible seed.
+            shares = tech_stock[coord_tech] / tech_stock[coord_tech].sum()
+            tech_choices_agent[coord_tech, :] = shares[:, None] * population_vector[None, :]
 
         else:
 

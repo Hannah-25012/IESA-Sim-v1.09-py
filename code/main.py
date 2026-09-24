@@ -71,6 +71,25 @@ def main(settings):
         foresight_passes = 1
     else:
         foresight_passes = settings.get('foresight_passes', 2) if foresight else 1
+    # Frozen-mix scenario - off by default (byte-identical to a normal run).
+    # When on, every investment routine that competes technologies against
+    # each other - invest_tech_choices_per_act.py (feeds driver/energy/
+    # nerghg/ccus technology choice), invest_driver_technologies.py,
+    # invest_power_technologies.py, invest_nerghg_technologies.py, and both
+    # the main LCOP-ordered fill tiers AND the final scarcity fallback inside
+    # invest_energy_technologies.py - size new/replacement capacity by each
+    # activity's OWN existing stock shares instead of ranking by
+    # multicriteria/LCOP/SPBT: "nothing changes, expired capacity gets
+    # replaced like-for-like." Falls back to the normal competitive/
+    # winner-take-all pick for any activity/technology with zero current
+    # stock (nothing to freeze there), and a technology's own stock_deploy
+    # build-rate pace cap still applies even under frozen_mix - a demand
+    # spike that outpaces what an incumbent can physically build in a period
+    # still spills onto a competitively-chosen technology, deliberately, not
+    # a gap to close (see invest_energy_technologies.py's own comment).
+    # invest_ccus_technologies.py's own LCOP fallback tier is untouched - a
+    # prior session confirmed it's dead code, unreachable with real data.
+    frozen_mix = settings.get('frozen_mix', False)
     print("Settings were successfully implemented")
 
     # Read the data from the excel input file into the database, if requested.
@@ -152,7 +171,7 @@ def main(settings):
             print(f"-Determining investments for the period: {periods[iP]}...")
             activities, technologies = mod2_invest(
                 dimensions, parameters, activities, technologies, agents, policies, iP,
-                foresight_reference=foresight_reference
+                foresight_reference=foresight_reference, frozen_mix=frozen_mix
             )
             print("-Investment module routine complete.")
             print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")

@@ -52,7 +52,18 @@ def invest_energy_sufficiency(dimensions, activities, technologies, techstock_ex
         if infra_obj.cap2act == 0:
             continue
         infra_capacity_annual = infra_obj.stock_max[iP] * infra_obj.cap2act * 365
-        already_supplied = actbalance_max[:, activity.idx].sum()
+        # BUGFIX: this was originally the NET balance (actbalance_max summed
+        # across producers AND consumers) - for an activity with heavy
+        # downstream consumption (e.g. Hydrogen HD), consumers' negative
+        # contributions make that net strongly negative, which made
+        # (infra_capacity_annual - already_supplied) come out LARGE instead
+        # of tight, so the cap never actually bound anything. The infra
+        # ceiling constrains GROSS THROUGHPUT (production flowing out to
+        # consumers), not net surplus/deficit - isolate the producer side
+        # only (positive activity_balance, mirroring disp_infrastructure.py's
+        # own sign-based isolation of one side of the flow).
+        producer_mask = activity_balances[:, activity.idx] > 0
+        already_supplied = actbalance_max[producer_mask, activity.idx].sum()
         allowed_gap = max(0.0, infra_capacity_annual - already_supplied)
         if activity_gap[activity.idx] > allowed_gap:
             activity_gap[activity.idx] = allowed_gap

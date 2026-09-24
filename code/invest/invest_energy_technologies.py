@@ -1,9 +1,10 @@
 # File to invest in energy technologies
 import numpy as np
 from invest_energy_sufficiency import invest_energy_sufficiency
+from invest_investment_potential import DEFAULT_STOCK_DEPLOY_FRACTION
 
 def invest_energy_technologies(dimensions, activities, technologies, techstock_exist,
-                                investment_potential, tech_choices, iP):
+                                investment_potential, tech_choices, iP, frozen_mix=False):
     # Extract Parameters
     nI = 3  # Number of investment iterations
     nA = dimensions['nA']
@@ -13,7 +14,14 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
     cap2act = technologies.balancers.cap2acts
     shedding_guarantee = technologies.balancers.shedding.guarantee
     techstock_max = technologies.balancers.stocks.max[:, iP]
-    stock_deploy = technologies.balancers.stocks.deploy
+    # Same default pacing rule as invest_investment_potential.py's Tier 1
+    # (investment_potential): a technology with no real stock_deploy set
+    # falls back to a fraction of its own stock_max instead of unlimited
+    # per-period headroom - computed once here so both fallback tiers below
+    # can't bypass it the way they used to bypass a real stock_deploy value.
+    stock_deploy_raw = technologies.balancers.stocks.deploy
+    stock_deploy = np.where(stock_deploy_raw > 0, stock_deploy_raw,
+                             DEFAULT_STOCK_DEPLOY_FRACTION * techstock_max)
     tech_choices_lcop_order = technologies.balancers.choices_lcop_order[:, iP]
     activity_balances = technologies.balancers.activity_balances
 
@@ -62,6 +70,7 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                     remaining_gap = np.round(remaining_gap, decimals=precision)
                     fill_investments = np.zeros((nT,1))
                     other_investments = np.zeros((nT,1))
+                    frozen_fill = np.zeros(nT)
 
                     if remaining_gap > 0:
                         tech_room = (techstock_max[tech_coord].flatten() - techstock_exist[tech_coord].flatten() -
@@ -80,14 +89,84 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                         # of THIS period's stock_deploy allowance is left
                         # after what this function has already committed
                         # (investments, from prior iI passes) plus this
-                        # iteration's own valid_investments tier. stock_deploy
-                        # <= 0 keeps the documented "no pacing" behavior
-                        # (sd_room = +inf, techstock_max stays the only cap).
+                        # iteration's own valid_investments tier. `stock_deploy`
+                        # here is already the effective value from the top of
+                        # this file - a real per-technology figure where set,
+                        # else the DEFAULT_STOCK_DEPLOY_FRACTION default - so
+                        # sd_room is only +inf if techstock_max itself is 0
+                        # (room_to_invest is 0 there too, so it's moot).
                         sd_tech = stock_deploy[tech_coord]
                         sd_used = investments[tech_coord, 0] + valid_investments.flatten()
                         sd_room = np.where(sd_tech > 0, np.maximum(0.0, sd_tech - sd_used), np.inf)
                         tech_room = np.minimum(tech_room, sd_room)
                         tech_room = np.round(tech_room, decimals=precision)
+
+                        # Frozen-mix scenario (see invest_tech_choices_per_act.py
+                        # and invest_power_technologies.py for the same rule on
+                        # the other investment paths): before the LCOP-ordered/
+                        # round-robin fallback below - which fills the gap by
+                        # cost ranking, ignoring tech_choices/existing shares
+                        # entirely - water-fill as much of the remaining gap as
+                        # possible across technologies that already have
+                        # existing stock, proportional to that stock's own
+                        # share. This is the same rule as valid_investments
+                        # above, extended past tier 1's own investment_potential
+                        # cap into whatever stock_deploy-limited room is left.
+                        # Iterative because a technology can hit its own room
+                        # before its "fair share" of the gap is used up, in
+                        # which case the leftover re-splits across the
+                        # technologies that still have room. A technology with
+                        # zero existing stock has nothing to freeze, so it's
+                        # excluded here and left entirely to the LCOP-ordered
+                        # fallback below - and so is whatever gap an existing
+                        # producer's own stock_deploy/DEFAULT_STOCK_DEPLOY_FRACTION
+                        # pace cap won't let it absorb, even though it does have
+                        # stock (e.g. Gas Reforming's real per-period Hydrogen
+                        # growth limit vs. faster demand growth). Deliberate,
+                        # not a gap to close: the build-rate cap stays real
+                        # under frozen_mix too, so "nothing changes" still
+                        # means "nothing changes FASTER than physically
+                        # plausible," not "unlimited replacement capacity."
+                        # tech_room/remaining_gap are reduced by
+                        # whatever this pass places, so the unchanged fallback
+                        # code below only ever sees what's left over - and
+                        # frozen_fill itself is merged into fill_investments
+                        # only after that fallback runs (its own while loop
+                        # OVERWRITES fill_investments[selected_index] rather
+                        # than adding to it, so merging any earlier would lose
+                        # this pass's contribution the moment the same index
+                        # got touched again).
+                        if frozen_mix:
+                            stock_existing = np.asarray(techstock_exist[tech_coord]).reshape(-1)
+                            room_activity = tech_room * cap2act_temp * shedding_adjustment_temp
+                            active = (tech_room > 0) & (stock_existing > 0)
+                            alloc_activity = np.zeros(nT)
+                            gap_left = float(remaining_gap)
+                            while gap_left > 1e-9 and active.any():
+                                active_stock = np.where(active, stock_existing, 0.0)
+                                stock_sum = active_stock.sum()
+                                if stock_sum <= 0:
+                                    break
+                                shares = active_stock / stock_sum
+                                headroom = room_activity - alloc_activity
+                                give = np.clip(np.minimum(gap_left * shares, headroom), 0, None)
+                                if give.sum() <= 1e-12:
+                                    break
+                                alloc_activity += give
+                                gap_left -= give.sum()
+                                active = active & ((room_activity - alloc_activity) > 1e-9)
+
+                            with np.errstate(divide='ignore', invalid='ignore'):
+                                frozen_fill = np.where(
+                                    alloc_activity > 0,
+                                    alloc_activity / (cap2act_temp * shedding_adjustment_temp), 0.0
+                                )
+                            frozen_fill = np.round(frozen_fill, decimals=precision)
+                            tech_room = np.round(tech_room - frozen_fill, decimals=precision)
+                            remaining_gap = np.round(gap_left, decimals=precision)
+                            if remaining_gap < 1e-6:
+                                remaining_gap = 0
+
                         cand_availability = tech_room > 0
                         order_search = tech_choices_lcop_order[tech_coord]
                         iT_search = 1
@@ -113,12 +192,17 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
 
                                 # Check for other technologies that were not chosen by agents
                                 tech_room_others = (techstock_max[tech_coord] - techstock_exist[tech_coord].ravel() -
-                                                    valid_investments.ravel() - fill_investments.ravel())
+                                                    valid_investments.ravel() - fill_investments.ravel() - frozen_fill)
                                 # Same stock_deploy layering as the main fill
                                 # loop above - this fallback tier would
-                                # otherwise bypass the pace cap too.
+                                # otherwise bypass the pace cap too. frozen_fill
+                                # (the frozen-mix water-fill pass above) is
+                                # included in both room and pace accounting here
+                                # since it hasn't been merged into
+                                # fill_investments yet - see the comment where
+                                # frozen_fill is computed.
                                 sd_used_others = (investments[tech_coord, 0] + valid_investments.ravel() +
-                                                   fill_investments.ravel())
+                                                   fill_investments.ravel() + frozen_fill)
                                 sd_room_others = np.where(sd_tech > 0, np.maximum(0.0, sd_tech - sd_used_others), np.inf)
                                 tech_room_others = np.minimum(tech_room_others, sd_room_others)
                                 if np.sum(tech_room_others) > 0:
@@ -134,6 +218,13 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                                     if iI == nI - 1:
                                         print(f"!!!!Warning: Not enough capacity to satisfy the demand for {activity.name}. Remaining gap: {remaining_gap.item():.2f} UoA")
                                     remaining_gap = 0
+
+                    # Merge the frozen-mix water-fill pass (if any) in now -
+                    # only after the LCOP-ordered/round-robin fallback above
+                    # has run, since that fallback's own while loop OVERWRITES
+                    # fill_investments[selected_index] rather than adding to
+                    # it (see the comment where frozen_fill is computed).
+                    fill_investments[:, 0] += frozen_fill
 
                     valid_investments = np.round(valid_investments.reshape(-1, 1), decimals=precision)
                     fill_investments = np.round(fill_investments.reshape(-1, 1), decimals=precision)
@@ -205,28 +296,52 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                 print(f"--****There is no producing technology to cover the energy gap for activity: {activity.name}")
                 continue
 
-            # Preferences of thoses technologies
-            options_preferences = tech_preference[tech_coord]
-            max_value = np.max(options_preferences)
-            options_sel = np.where(options_preferences == max_value)[0][0]
+            # Frozen-mix scenario (see invest_tech_choices_per_act.py and
+            # invest_power_technologies.py for the same rule on the other two
+            # investment paths): split the unmet gap across ALL current
+            # producers by their existing stock share, instead of dumping the
+            # whole thing into a single highest-tech_choices winner below - a
+            # scarcity gap gets shared out like-for-like too, not handed to
+            # whichever technology currently ranks first. A gap for an
+            # activity with no current producer stock (nothing built yet)
+            # still falls through to the normal winner-take-all pick, since
+            # there's no existing mix to freeze there.
+            if frozen_mix:
+                stock_for_shares = np.asarray(techstock_new[tech_coord]).reshape(-1)
+                stock_total = stock_for_shares.sum()
+            else:
+                stock_total = 0.0
 
-            # Identify which technology was chosen
-            choice_coord = tech_coord[options_sel]
+            if frozen_mix and stock_total > 0:
+                shares = stock_for_shares / stock_total
+                for i, t_idx in enumerate(tech_coord):
+                    add = energy_gap[activity.idx] * shares[i] / cap2act[t_idx]
+                    investments[t_idx] += add
+                    techstock_new[t_idx] += add
 
-            # Fill investments and stocks. techstock_max is deliberately left
-            # untouched here (previously overwritten to match whatever was
-            # just forced in) - that turned a real, exogenous capacity
-            # ceiling into a self-referential bookkeeping artifact that only
-            # ever grew, and fed straight into invest_techstocks_def.py's own
-            # "guaranteed availability" forcing for Primary/Exports/
-            # Undispatched-style technologies (tech_stock = tech_stock_max)
-            # on any later period. If this technology's own real max still
-            # constrains it, invest_techstocks_def.py's normal min/max clamp
-            # brings the forced investment back down to that genuine ceiling
-            # next period - the same honest "can't fully meet this" outcome
-            # the warning above already reports, not a silently expanded one.
-            investments[choice_coord] += energy_gap[activity.idx] / cap2act[choice_coord]
-            techstock_new[choice_coord] += energy_gap[activity.idx] / cap2act[choice_coord]
+            else:
+                # Preferences of thoses technologies
+                options_preferences = tech_preference[tech_coord]
+                max_value = np.max(options_preferences)
+                options_sel = np.where(options_preferences == max_value)[0][0]
+
+                # Identify which technology was chosen
+                choice_coord = tech_coord[options_sel]
+
+                # Fill investments and stocks. techstock_max is deliberately left
+                # untouched here (previously overwritten to match whatever was
+                # just forced in) - that turned a real, exogenous capacity
+                # ceiling into a self-referential bookkeeping artifact that only
+                # ever grew, and fed straight into invest_techstocks_def.py's own
+                # "guaranteed availability" forcing for Primary/Exports/
+                # Undispatched-style technologies (tech_stock = tech_stock_max)
+                # on any later period. If this technology's own real max still
+                # constrains it, invest_techstocks_def.py's normal min/max clamp
+                # brings the forced investment back down to that genuine ceiling
+                # next period - the same honest "can't fully meet this" outcome
+                # the warning above already reports, not a silently expanded one.
+                investments[choice_coord] += energy_gap[activity.idx] / cap2act[choice_coord]
+                techstock_new[choice_coord] += energy_gap[activity.idx] / cap2act[choice_coord]
 
     # Calculate energy scarcity
     energy_scarcity_add = np.zeros((nAe,1))

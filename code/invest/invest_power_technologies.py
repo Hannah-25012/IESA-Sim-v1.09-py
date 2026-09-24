@@ -1,7 +1,8 @@
 # File to determine investments into power technologies
 import numpy as np
 
-def invest_power_technologies(dimensions, parameters, activities, technologies, agents, tech_stock_exist, iP):
+def invest_power_technologies(dimensions, parameters, activities, technologies, agents, tech_stock_exist, iP,
+                               frozen_mix=False):
 
     # Extract Parameters
     nTb = dimensions['nTb']
@@ -33,6 +34,30 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
 
     # Identify the choice per activity and agent type
     iMC3 = np.where(np.array(multi_criteria_categories) == 'Cost performance')[0][0]
+
+    # Frozen-mix scenario (see invest_tech_choices_per_act.py for the same
+    # rule on the driver/energy investment path): each generator's share of
+    # its OWN electricity activity's currently-installed stock, computed once
+    # here rather than per-technology inside the loop below. A technology
+    # with zero current stock (a brand-new build) has nothing to freeze, so
+    # it's left at share 0 and falls through to the normal SPBT/multicriteria
+    # appetite scoring in the loop.
+    stock_share_by_tech = np.zeros(nTb)
+    if frozen_mix:
+        # tech_stock_exist arrives as (nTb,1) from mod2_invest.py's
+        # tech_stock_new - flatten once so the fancy-indexed assignment below
+        # broadcasts against the 1D stock_share_by_tech correctly.
+        tech_stock_flat = np.asarray(tech_stock_exist).reshape(-1)
+        seen_activities = set()
+        for tech in tech_entities:
+            own_act = tech.activity
+            if own_act is not None and own_act.is_electricity and own_act.idx not in seen_activities:
+                seen_activities.add(own_act.idx)
+                siblings = [t for t in own_act.technologies if not t.is_buffer]
+                sibling_idxs = np.array([t.idx for t in siblings], dtype=int)
+                sibling_stock_total = tech_stock_flat[sibling_idxs].sum()
+                if sibling_stock_total > 0:
+                    stock_share_by_tech[sibling_idxs] = tech_stock_flat[sibling_idxs] / sibling_stock_total
 
     # Loop through all technologies
     new_investments = np.zeros((nTb,1)) # Preallocate new investments
@@ -110,44 +135,55 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
                         range_max = max(1, tech_stock_max[iTb] - tech_stock_exist[iTb])
                     potential_range = range_max - range_min
 
-                    # The point in the range will be determined by the actors preferences
-                    # A) We recalculate economic performance based on SPBT:
-                    # SPBT <= benchmark =1, SPBT >= min = 0
-                    multi_criteria_generator = multi_criteria_performance_tech[iTb, :].copy()
-                    # No SPBT yet (never operated) -> no economic score to add;
-                    # leave the cost-performance criterion at 0 so the first
-                    # foothold stays small and driven by the other criteria,
-                    # not by a fabricated payback number.
-                    if np.isnan(powinv_SPBT_iTb):
-                        multi_criteria_generator[iMC3] = 0.0
+                    if frozen_mix and stock_share_by_tech[iTb] > 0:
+                        # Frozen-mix: size the investment by this technology's
+                        # own existing share of its activity's installed stock
+                        # instead of the SPBT/multicriteria appetite scoring
+                        # below - new/replacement generation capacity follows
+                        # today's mix rather than picking a winner on cost/CO2/
+                        # social score (see invest_tech_choices_per_act.py for
+                        # the same rule on the driver/energy investment path).
+                        investment_itb = range_min + potential_range * stock_share_by_tech[iTb]
+
                     else:
-                        powinv_spbt = 1 - (powinv_SPBT_iTb - powinv_SPBT_benchmark) / (powinv_SPBT_min - powinv_SPBT_benchmark)
-                        multi_criteria_generator[iMC3] = max(min(1, powinv_spbt), 0)
+                        # The point in the range will be determined by the actors preferences
+                        # A) We recalculate economic performance based on SPBT:
+                        # SPBT <= benchmark =1, SPBT >= min = 0
+                        multi_criteria_generator = multi_criteria_performance_tech[iTb, :].copy()
+                        # No SPBT yet (never operated) -> no economic score to add;
+                        # leave the cost-performance criterion at 0 so the first
+                        # foothold stays small and driven by the other criteria,
+                        # not by a fabricated payback number.
+                        if np.isnan(powinv_SPBT_iTb):
+                            multi_criteria_generator[iMC3] = 0.0
+                        else:
+                            powinv_spbt = 1 - (powinv_SPBT_iTb - powinv_SPBT_benchmark) / (powinv_SPBT_min - powinv_SPBT_benchmark)
+                            multi_criteria_generator[iMC3] = max(min(1, powinv_spbt), 0)
 
-                    # B) We use the multiCriteria_performance matrix to obtain an indicator from 0 to 1 for each technology and actor, we then multiply
-                    # by the range and its population fraction
+                        # B) We use the multiCriteria_performance matrix to obtain an indicator from 0 to 1 for each technology and actor, we then multiply
+                        # by the range and its population fraction
 
-                    # Identify population vector of agent type based on agent profile.
-                    # agent_profile is a Sim-only concept IESA-Opt never provides (see
-                    # mod0_load_duckdb._load_activities) - a merged-only electricity
-                    # activity (e.g. this project's "Electricity NL - HV"/"- LV") has no
-                    # agent profile assigned, so agent_idx_by_name[None] would KeyError.
-                    # Same gap, same fix as invest_tech_choices_per_act.py's own
-                    # agent_idx_by_name.get(...) lookup: split evenly across agent types
-                    # rather than crashing or guessing a single real profile. Every
-                    # technology with a real agent_profile_name is unaffected.
-                    agent_idx = agent_idx_by_name.get(own_act.agent_profile_name)
-                    if agent_idx is not None:
-                        population_vector = agents_populations[agent_idx, :]
-                    else:
-                        population_vector = np.full(nAT, 1.0 / nAT)
-                    population_vector = population_vector / np.sum(population_vector)
+                        # Identify population vector of agent type based on agent profile.
+                        # agent_profile is a Sim-only concept IESA-Opt never provides (see
+                        # mod0_load_duckdb._load_activities) - a merged-only electricity
+                        # activity (e.g. this project's "Electricity NL - HV"/"- LV") has no
+                        # agent profile assigned, so agent_idx_by_name[None] would KeyError.
+                        # Same gap, same fix as invest_tech_choices_per_act.py's own
+                        # agent_idx_by_name.get(...) lookup: split evenly across agent types
+                        # rather than crashing or guessing a single real profile. Every
+                        # technology with a real agent_profile_name is unaffected.
+                        agent_idx = agent_idx_by_name.get(own_act.agent_profile_name)
+                        if agent_idx is not None:
+                            population_vector = agents_populations[agent_idx, :]
+                        else:
+                            population_vector = np.full(nAT, 1.0 / nAT)
+                        population_vector = population_vector / np.sum(population_vector)
 
-                    # Quantify the interest per agent and add to the investment counter
-                    investment_itb = range_min
-                    for iAT in range(nAT):
-                        criteria_iat = np.sum(weights_multi_criteria[:, iAT] * multi_criteria_generator) / np.sum(weights_multi_criteria[:, iAT])
-                        investment_itb += potential_range * criteria_iat * population_vector[iAT]
+                        # Quantify the interest per agent and add to the investment counter
+                        investment_itb = range_min
+                        for iAT in range(nAT):
+                            criteria_iat = np.sum(weights_multi_criteria[:, iAT] * multi_criteria_generator) / np.sum(weights_multi_criteria[:, iAT])
+                            investment_itb += potential_range * criteria_iat * population_vector[iAT]
 
                     new_investments[iTb] = investment_itb
 

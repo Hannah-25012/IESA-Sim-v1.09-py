@@ -201,6 +201,18 @@ _DEFAULT_SETTINGS = {
     # the Sim/Opt hand-off modes already reuse).
     "foresight_source": "sim",
     "foresight_opt_db": None,
+    # "Nothing changes" baseline (see main.py/invest_tech_choices_per_act.py/
+    # invest_power_technologies.py/invest_energy_technologies.py's scarcity
+    # fallback). Off by default - normal multicriteria/LCOP/SPBT tech
+    # competition. When true, new/replacement capacity for each activity
+    # (including power generation and unmet-demand scarcity fills) splits by
+    # that activity's own currently-installed stock shares instead, so
+    # expired capacity is simply replaced like-for-like and only demand
+    # growth (already handled by the normal investment-gap logic) adds new
+    # capacity. Falls back to the normal competitive/winner-take-all pick for
+    # any activity/technology with zero existing stock, since there's no
+    # current mix to freeze there.
+    "frozen_mix": False,
 }
 
 
@@ -242,6 +254,7 @@ def _build_settings(overrides: Optional[dict]) -> dict:
         "foresight_passes": merged["foresight_passes"],
         "foresight_source": merged["foresight_source"],
         "foresight_opt_db": merged["foresight_opt_db"],
+        "frozen_mix": merged["frozen_mix"],
     }
 
 
@@ -282,8 +295,16 @@ def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -
         # same granularity compare-results.html already sends for Sim vs Opt,
         # aggregated client-side by sector/category rather than in SQL here.
         if "technology_stock" in extra:
+            # subsector is included alongside category so compare-spread.html
+            # can exclude the same placeholder/accounting technologies from
+            # its top-technologies table that Opt's cost_breakdown ranking
+            # already excludes server-side (category='Emission' - ETS quotas,
+            # non-ETS/MACC/"Indirect -" GHG bookkeeping; subsector=
+            # 'Undispatched' - the VOLL scarcity-price placeholder). Same two
+            # markers results_system_costs.py already excludes from Sim's own
+            # capital cost, for the identical reason.
             result["technology_stock"] = rows("""
-                SELECT t.name, t.sector, t.category, ts.period, ts.stock
+                SELECT t.name, t.sector, t.category, t.subsector, ts.period, ts.stock
                 FROM technology_stock ts JOIN technologies t ON t.id = ts.tech_id
                 ORDER BY t.sector, t.name, ts.period""")
 

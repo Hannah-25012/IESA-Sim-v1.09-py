@@ -3,7 +3,7 @@ import numpy as np
 from invest_nerghg_sufficiency import invest_nerghg_sufficiency
 
 def invest_nerghg_technologies(dimensions, activities, technologies,
-                                techstock_exist, investment_potential, tech_choices, iP):
+                                techstock_exist, investment_potential, tech_choices, iP, frozen_mix=False):
 
     # Extract Parameters
     nTb = dimensions['nTb']
@@ -44,12 +44,47 @@ def invest_nerghg_technologies(dimensions, activities, technologies,
                 # If gap remains, try to fill it
                 if remaining_gap > 0:
                     tech_room = techstock_max[tech_coord].flatten() - techstock_exist[tech_coord].flatten() - valid_investments.flatten()
+                    other_investments = np.zeros(nT)
+                    rem = remaining_gap
+
+                    # Frozen-mix scenario (see invest_tech_choices_per_act.py
+                    # and the other investment paths for the same rule):
+                    # before the LCOP-ranked fill below - which ignores
+                    # tech_choices/existing shares entirely - water-fill as
+                    # much of the remaining gap as possible across
+                    # technologies that already have existing stock,
+                    # proportional to that stock's own share. A technology
+                    # with zero existing stock has nothing to freeze, so it's
+                    # excluded here and left to the normal fallback below.
+                    fills = np.zeros(nT)
+                    if frozen_mix:
+                        stock_existing = techstock_exist[tech_coord].flatten()
+                        active = (tech_room > 0) & (stock_existing > 0)
+                        alloc = np.zeros(nT)
+                        gap_left = float(rem)
+                        while gap_left > 1e-9 and active.any():
+                            active_stock = np.where(active, stock_existing, 0.0)
+                            stock_sum = active_stock.sum()
+                            if stock_sum <= 0:
+                                break
+                            shares = active_stock / stock_sum
+                            headroom = (tech_room * cap2act_temp) - alloc
+                            give = np.clip(np.minimum(gap_left * shares * cap2act_temp, headroom), 0, None)
+                            if give.sum() <= 1e-12:
+                                break
+                            alloc += give
+                            gap_left -= give.sum()
+                            active = active & (((tech_room * cap2act_temp) - alloc) > 1e-9)
+                        with np.errstate(divide='ignore', invalid='ignore'):
+                            fills = np.where(alloc > 0, alloc / cap2act_temp, 0.0)
+                        tech_room = tech_room - fills
+                        rem = gap_left
+                        if rem < 1e-6:
+                            rem = 0
+
                     cand_availability = tech_room > 0
                     order_search = tech_choices_lcop_order[tech_coord]
                     order_idx = np.argsort(order_search)
-                    fills = np.zeros(nT)
-                    other_investments = np.zeros(nT)
-                    rem = remaining_gap
 
                     # Fill the gap based on LCOP ranking
                     for rank in order_idx:
@@ -58,7 +93,7 @@ def invest_nerghg_technologies(dimensions, activities, technologies,
                         if cand_availability[rank]:
                             possible = rem / cap2act_temp[rank]
                             amt = min(possible, tech_room[rank])
-                            fills[rank] = amt
+                            fills[rank] += amt
                             rem -= amt * cap2act_temp[rank]
 
                     # if still gap remains, assign to first technology
