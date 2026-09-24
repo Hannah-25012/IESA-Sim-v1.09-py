@@ -48,12 +48,32 @@ def invest_decommissioning(dimensions, activities, technologies, forced_decommis
                 source_tech = options[iOpts]
                 iOpts += 1
 
-                available_stock = float(tech_stock_available[source_tech.idx])
+                # A source technology can be listed as an eligible retrofit
+                # source for more than one destination technology - without
+                # netting out what earlier destinations in this same period's
+                # tech_entities loop already claimed, every destination sees
+                # the same full tech_stock_available[source] (this function
+                # never mutates that input array) and the plain assignment
+                # below would let the last destination processed silently
+                # overwrite - not add to - whatever an earlier destination
+                # already recorded, so the source's real total decommissioning
+                # only ever reflected its last claimant. Net effect: shared
+                # sources under-decommission relative to the combined
+                # destination investment they funded, creating phantom stock
+                # (total capacity grows without matching retirement). Netting
+                # out retrofitting_decommissionings[source_tech.idx] here -
+                # already-claimed amount - and accumulating (+=) instead of
+                # overwriting (=) makes every destination compete for what's
+                # actually still left of the shared source within this period.
+                already_claimed = float(retrofitting_decommissionings[source_tech.idx])
+                available_stock = max(float(tech_stock_available[source_tech.idx]) - already_claimed, 0.0)
                 to_decommission_now = min(to_decommission_still, available_stock)
                 to_decommission_still -= to_decommission_now
 
-                # Save the decision
-                retrofitting_decommissionings[source_tech.idx] = to_decommission_now
+                # Save the decision (accumulate - a shared source may be
+                # drawn down by more than one destination technology in the
+                # same period)
+                retrofitting_decommissionings[source_tech.idx] += to_decommission_now
 
     # Adjust the stocks with the new period decommissionings
     tech_stock = tech_stock.reshape(-1,1)
