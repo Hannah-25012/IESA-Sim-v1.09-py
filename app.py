@@ -213,6 +213,20 @@ _DEFAULT_SETTINGS = {
     # any activity/technology with zero existing stock, since there's no
     # current mix to freeze there.
     "frozen_mix": False,
+    # Policy-subsidy counterfactual - on by default (byte-identical to every
+    # run before this setting existed: subsidies/feed-ins apply normally,
+    # same as always). When false, policies.subsidies.values and
+    # policies.feedins.values are zeroed right after they're loaded from the
+    # database (see main.py's run_pass) - before either invest_tech_LCOPs.py
+    # (which uses them to discount a subsidized technology's effective
+    # investment/VOM cost in the LCOP competition) or
+    # results_policy_cashflows.py (which reports the resulting cashflow) see
+    # them, so both consistently reflect "this policy never existed" from
+    # one intervention point rather than needing their own flag checks.
+    # policies.subsidies is IESA-Sim's "Investment subsidies" table and
+    # policies.feedins its "Feed-In subsidies" table - both get zeroed;
+    # policies.taxes (a cost, not a subsidy) is untouched.
+    "apply_subsidies": True,
 }
 
 
@@ -255,6 +269,7 @@ def _build_settings(overrides: Optional[dict]) -> dict:
         "foresight_source": merged["foresight_source"],
         "foresight_opt_db": merged["foresight_opt_db"],
         "frozen_mix": merged["frozen_mix"],
+        "apply_subsidies": merged["apply_subsidies"],
     }
 
 

@@ -90,6 +90,15 @@ def main(settings):
     # invest_ccus_technologies.py's own LCOP fallback tier is untouched - a
     # prior session confirmed it's dead code, unreachable with real data.
     frozen_mix = settings.get('frozen_mix', False)
+    # Policy-subsidy counterfactual - on by default (byte-identical to every
+    # run before this setting existed). When false, zeroed right after
+    # load_from_duckdb below, before either invest_tech_LCOPs.py (which
+    # discounts a subsidized technology's effective investment/VOM cost with
+    # these same arrays) or results_policy_cashflows.py (which reports the
+    # resulting cashflow) ever see them - one intervention point instead of
+    # a flag check duplicated in both. Taxes are a cost, not a subsidy, and
+    # stay untouched.
+    apply_subsidies = settings.get('apply_subsidies', True)
     print("Settings were successfully implemented")
 
     # Read the data from the excel input file into the database, if requested.
@@ -116,6 +125,11 @@ def main(settings):
         print(f"Loading input data from {db_path} ...")
         parameters, types, activities, profiles, technologies, agents, policies = load_from_duckdb(db_path)
         print("The input data was successfully loaded from the database")
+
+        if not apply_subsidies:
+            policies.subsidies.values[:] = 0
+            policies.feedins.values[:] = 0
+            print("apply_subsidies=false - investment and feed-in subsidy values zeroed")
 
         print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
