@@ -19,12 +19,28 @@ Sim-output schemas):
       infrastructure_stock_evolution (infra_id, period, stock)     # full-state DB only
       technology_decommissionings (tech_id, period, decommissioning)  # full-state DB only
   BRIDGE  merged/Opt input DB
-      technologies.sim_id  -> technologies.id (== opt_id namespace)
-      infrastructure.sim_id -> infrastructure.id
+      technologies.COALESCE(sim_id, id) -> technologies.id (== opt_id namespace)
+      infrastructure.COALESCE(sim_id, id) -> infrastructure.id
+      Sim's own result DB already uses the merged DB's own `id` for any
+      technology it wasn't given a specific sim_id override for - it's
+      reading that same merged DB as its input and doesn't rename anything
+      it has no reason to. The curated `technology_aliases` list (sim_id)
+      only needs to cover the genuine exceptions (Sim's NATIVE, non-merged
+      catalog really does use a different id for that technology), not
+      every technology - confirmed live: a gap of 138 "sim_only_ignored"
+      technologies turned out to be 138/138 resolvable via a direct id
+      match, with the curated list simply never populated for them.
   TARGET  a COPY of the merged/Opt input DB
       technologies.stock_initial   <- Sim stock @handoff       # Opt techStock_exist
       infrastructure.stock_initial  <- Sim infra stock @handoff
-      technology_stocks.dec_planned <- Sim decommissioning, periods > handoff
+      technology_stocks.dec_planned <- Sim decommissioning, periods > handoff;
+                                        NULLed for periods <= handoff (mirrors
+                                        seed_from_opt's identical re-basing
+                                        step - any event at/before handoff is
+                                        already reflected in stock_initial, so
+                                        leaving a stale value in place double-
+                                        retires it and can exceed the now-
+                                        current stock_initial outright)
       periods_solve.value           <- [handoff .. last period]
 
 Data path, reverse direction (Opt -> Sim; see seed_from_opt):
@@ -109,14 +125,39 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int) -> dic
                 f"Re-run Sim with year_end >= {H} before extracting.")
 
         # --- coverage / hazard report (computed before the writes) ----------
+        # Sim's own result DB uses Sim's own internal tech ids - when the run
+        # that PRODUCED it was itself solved against a merged database (the
+        # normal case for every hand-off round), Sim echoes that merged DB's
+        # own `technologies.id` straight back for any technology it has no
+        # specific reason to rename. A plain COALESCE(sim_id, id) - sim_id
+        # whenever curated, id otherwise - gets this backwards: confirmed
+        # live on "Biomass wCCS - Power NL" (id=PNL01_13), whose curated
+        # sim_id is "PNL01_09" (its name under Sim's own NATIVE, non-merged
+        # catalog) - but this run's own Sim output reports stock under
+        # "PNL01_13" (the merged DB's id, echoed back), not "PNL01_09". A
+        # plain COALESCE forces the stale native-catalog alias to win even
+        # though a direct, correct match was sitting right there, silently
+        # dropping this exact technology (and everything else with an
+        # ARCHIVED-but-now-wrong sim_id). _sim_id_expr instead checks THIS
+        # run's own Sim output first - a direct id match always wins when
+        # Sim actually reported one - falling back to the curated sim_id
+        # alias only for a technology this run's Sim output never touched
+        # under its own id at all (the genuine native-catalog-differs case
+        # the alias column exists for).
+        def _sim_id_expr(alias: str = "t") -> str:
+            return f"""(CASE WHEN EXISTS (
+                SELECT 1 FROM sim.{stock_tbl} s2 WHERE s2.tech_id = {alias}.id AND s2.period = {H}
+            ) THEN {alias}.id ELSE {alias}.sim_id END)"""
+        sim_id_expr = _sim_id_expr("t")
+
         matched = con.execute(f"""
             select count(*) from technologies t
-            join sim.{stock_tbl} s on s.tech_id = t.sim_id and s.period = {H}
+            join sim.{stock_tbl} s on s.tech_id = {sim_id_expr} and s.period = {H}
         """).fetchone()[0]
         sim_only = con.execute(f"""
             select count(distinct s.tech_id) from sim.{stock_tbl} s
             where s.period = {H}
-              and s.tech_id not in (select sim_id from technologies where sim_id is not null)
+              and s.tech_id not in (select {sim_id_expr} from technologies t)
         """).fetchone()[0]
         dupes = con.execute("""
             select sim_id, count(*) c from technologies
@@ -124,42 +165,72 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int) -> dic
         """).fetchall()
         unit_mismatch = con.execute(f"""
             select count(*) from technologies t
-            join sim.technologies st on st.id = t.sim_id
+            join sim.technologies st on st.id = {sim_id_expr}
             where t.unit is not null and st.unit is not null and t.unit <> st.unit
-              and t.sim_id in (select tech_id from sim.{stock_tbl} where period = {H})
+              and {sim_id_expr} in (select tech_id from sim.{stock_tbl} where period = {H})
         """).fetchone()[0]
 
         # --- TIER 1 core: seed existing stock from Sim @handoff -------------
         con.execute(f"""
             update technologies t set stock_initial = s.stock
             from sim.{stock_tbl} s
-            where s.tech_id = t.sim_id and s.period = {H}
+            where s.tech_id = {sim_id_expr} and s.period = {H}
         """)
 
         # --- TIER 1 honesty: infra stock + retirement schedule (state DB) ---
         infra_seeded = 0
         if "infrastructure_stock_evolution" in sim_tables:
+            infra_expr = f"""(CASE WHEN EXISTS (
+                SELECT 1 FROM sim.infrastructure_stock_evolution s2 WHERE s2.infra_id = i.id AND s2.period = {H}
+            ) THEN i.id ELSE i.sim_id END)"""
             con.execute(f"""
                 update infrastructure i set stock_initial = s.stock
                 from sim.infrastructure_stock_evolution s
-                where s.infra_id = i.sim_id and s.period = {H}
+                where s.infra_id = {infra_expr} and s.period = {H}
             """)
             infra_seeded = con.execute(f"""
                 select count(*) from infrastructure i
                 join sim.infrastructure_stock_evolution s
-                  on s.infra_id = i.sim_id and s.period = {H}
+                  on s.infra_id = {infra_expr} and s.period = {H}
             """).fetchone()[0]
 
         decom_rows = 0
         if "technology_decommissionings" in sim_tables:
+            # Same priority as sim_id_expr above, keyed off this table's own
+            # ids rather than {stock_tbl}'s (a technology could in principle
+            # appear in one but not the other).
+            decom_id_expr = f"""(CASE WHEN EXISTS (
+                SELECT 1 FROM sim.technology_decommissionings d2 WHERE d2.tech_id = t.id AND d2.period > {H}
+            ) THEN t.id ELSE t.sim_id END)"""
             con.execute(f"""
                 update technology_stocks ts set dec_planned = d.decommissioning
                 from sim.technology_decommissionings d, technologies t
-                where t.sim_id = d.tech_id and ts.tech_id = t.id
+                where {decom_id_expr} = d.tech_id and ts.tech_id = t.id
                   and ts.period = d.period and d.period > {H}
             """)
             decom_rows = con.execute(
                 f"select count(*) from sim.technology_decommissionings where period > {H}").fetchone()[0]
+
+        # --- re-base planned decommissioning: any event at/before the
+        # hand-off is already reflected in the seeded stock_initial above -
+        # leaving it in place lets Opt's own first-solved-period
+        # decom_plannedSel absorption retire it a SECOND time, on top of
+        # whatever Sim already decided. Mirrors seed_from_opt's identical
+        # "dec_planned = NULL where period <= S" step (see its own comment).
+        # Confirmed live on a twice-chained config-5 round 3 extract: without
+        # this, 20 technologies carried a stale dec_planned from the
+        # ORIGINAL merged database's decommissioning schedule - computed
+        # for a trajectory the chain had since diverged from after two
+        # rounds of Sim's own independent decisions - that exceeded their
+        # own (correctly seeded) stock_initial at the hand-off (e.g.
+        # Gas01_01: stock_initial=0, dec_planned=200), an unsatisfiable
+        # "decommission more than exists" constraint and the real cause of
+        # that round's persistent infeasibility (previously misdiagnosed as
+        # a numerical/solver-method issue).
+        dec_planned_cleared = con.execute(
+            f"select count(*) from technology_stocks where dec_planned is not null and dec_planned != 0 and period <= {H}"
+        ).fetchone()[0]
+        con.execute(f"update technology_stocks set dec_planned = NULL where period <= {H}")
 
         # --- set Opt's solve window to start at the hand-off ---------------
         con.execute("delete from periods_solve")
@@ -173,6 +244,7 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int) -> dic
             "seeded_technologies": matched,
             "seeded_infrastructure": infra_seeded,
             "dec_planned_rows": decom_rows,
+            "dec_planned_cleared": dec_planned_cleared,
             "solve_window": solve_window,
             "sim_only_ignored": sim_only,
             "unit_mismatches": unit_mismatch,

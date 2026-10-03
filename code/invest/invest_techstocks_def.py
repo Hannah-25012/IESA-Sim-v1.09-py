@@ -213,8 +213,24 @@ def invest_techstocks_def(dimensions, technologies, tech_stock_original, prelimi
                 forced_investments[iTb, 0] = 0.0
 
             if 'Emission' in tech.sector:
-                tech_stock[iTb] = 5000
-                primary_decommissionings[iTb] = 5000
+                # Was a hardcoded tech_stock=5000 sentinel ("pretend infinite
+                # headroom so this pure-accounting pseudo-tech never looks
+                # like it needs investment") that overrode the already-
+                # correct min/max clamp the first loop above just computed -
+                # for a merged/Opt-sourced technology, tech_stock_max IS
+                # Opt's own technology_stocks.max, which is unconditionally 0
+                # for these 4 CO2 ETS/non-ETS/Int.Transport/Feedstock techs
+                # every period (accounting constructs, not physical plant).
+                # Copying that stale 5000 downstream (e.g. into a Sim->Opt
+                # hand-off's stock_initial) pinned a value above Opt's own
+                # hard upper bound -> instant infeasibility. Using
+                # tech_stock_max here instead keeps Sim's own notion of this
+                # technology's capacity coherent with whatever bound Opt
+                # actually has for it, the same guarantee every sibling
+                # branch above (Primary/XC Trade/Undispatched/Indirect) already
+                # gives its own always-available technologies.
+                tech_stock[iTb] = tech_stock_max[iTb]
+                primary_decommissionings[iTb] = tech_stock_max[iTb]
 
     # Update primary decommissioning for next period
     if iP + 1 < nP:

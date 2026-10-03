@@ -11,9 +11,13 @@ def graph_systemEmissions(activities, technologies, policies, results, font_name
     tech_stock_max = technologies.balancers.stocks.max
     emissions = results.emissions
 
-    # Historical NL emissions
-    years = np.arange(2015, 2024)  # creates an array from 2015 to 2023
-    realized_emissions = [194.4, 195.1, 192.4, 187.2, 181.4, 164.8, 167.7, 154.1, 145.4]
+    # Historical NL emissions - CBS/RIVM total GHG, CO2-equivalent, IPCC
+    # method. Updated 2026-10-02 from CBS press releases, one per year,
+    # 2020 onward only (CBS revises each year's figure in later releases,
+    # and the pre-2020 values were stale) - see frontend/compare-spread.html's
+    # REAL_HISTORICAL_EMISSIONS, the same series duplicated there.
+    years = np.arange(2020, 2026)  # creates an array from 2020 to 2025
+    realized_emissions = [166, 172, 158.4, 146.4, 144.4, 145.6]
 
     # Calculating the emission target: prefer IESA-Opt's own per-node policy
     # input (node_emission_targets, see mod0_load_duckdb.py's

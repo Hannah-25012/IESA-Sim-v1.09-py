@@ -185,8 +185,22 @@ def mod1_initialize(settings, types, activities, technologies, agents, policies)
     # LCOPs categories definition
     categories_LCOPs = ['Investment', 'FOM', 'VOM', 'Fuels', 'Emissions']
 
-    # Activities accounted for the emission targets
-    emission_targets = ['CO2 Air ETS', 'CO2 Air n-ETS']
+    # Activities accounted for the emission targets. Deliberately omits
+    # 'CO2 Air Int. Transport' (international aviation/shipping bunker fuel) -
+    # UNFCCC/CBS national GHG inventories exclude bunker fuels from a
+    # country's own territorial total (reported as a separate memo item
+    # instead), so results_emissions.py's total should too, to stay
+    # comparable to the real CBS/RIVM reference line in compare-spread.html.
+    # 'CO2 Air Feedstock end of lifetime' (petrochemical/plastics embedded
+    # carbon) IS included below, though - unlike bunker fuel, this one does
+    # belong in a real-world-comparable total: confirmed live by replicating
+    # IESA-Opt's own "type IN (emission, emissionreport)" activity scan
+    # (julia-backend's _emissions_payload) on the SAME 2022 base year and
+    # excluding ONLY bunker fuel - that lands at ~157.5 Mt against CBS's
+    # ~158.4 Mt (near-exact), while this list's PREVIOUS two-activity-only
+    # scope reported ~122 Mt, ~36 Mt too low, mostly from missing this one
+    # category.
+    emission_targets = ['CO2 Air ETS', 'CO2 Air n-ETS', 'CO2 Air Feedstock end of lifetime']
 
     # Policy cashflows categories
     policy_cashflows_categories = ['EUA', 'Taxes', 'Feed-In subsidies', 'Investment subsidies']
