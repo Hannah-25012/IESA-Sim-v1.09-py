@@ -41,7 +41,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         loadshifts_range, loadshifts_per_elec, loadshifts_demand_hourly,
         bat_efficiency, bat_capacity, bat_volume, bat_per_elec, bat_vom, bat_stock,
         xc_efficiencies, xc_vom, xc_per_elec, xc_demand, xc_supply, elec_cogenerated,
-        xc_to_idx, xc_from_actidx,
+        xc_to_idx, xc_from_actidx, xc_from_elecidx, gen_is_voll,
         tech_generators_coord, tech_shedding_coord, tech_loadshifts_coord,
         tech_batteries_coord, tech_interconnectors_coord
     ) = disp_initialize_power(dimensions, activities, technologies, profiles, tech_use_hourly, iP)
@@ -65,8 +65,8 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
             gen_vom, gen_balance_hourly, gen_availability_hourly,
             gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly_new,
             prices_hourly, voll,
-            xc_to_idx, xc_from_actidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl,
-            shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom
+            xc_to_idx, xc_from_actidx, xc_from_elecidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl,
+            shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom, gen_is_voll
         )
 
         # Display iteration info for the last balancing loop

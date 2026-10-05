@@ -13,6 +13,7 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     activity_balances = technologies.balancers.activity_balances
     tech_stock = technologies.balancers.stocks.evolution[:, iP]
     tech_subsector = technologies.balancers.subsectors
+    tech_category = technologies.balancers.categories
     cap2act = technologies.balancers.cap2acts
     vom_cost = technologies.balancers.costs.voms[:, iP]
     shedding_capacity = technologies.balancers.shedding.capacity
@@ -58,7 +59,28 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     # voltage tier. Only the subsector label differs now (so other code, e.g.
     # invest_techstocks_def.py's guarantee-availability check, can tell them
     # apart); dispatch itself treats them identically.
-    tech_interconnectors_coord = np.isin(np.array(tech_subsector), ['XC Trade', 'Transformer'])
+    #
+    # Also match on CATEGORY=='XC Trade' (restricted to technologies whose
+    # own activity is electricity, via tech_elec_coord above) - subsector
+    # alone misses a real cross-border electricity trade technology whenever
+    # its own subsector was never set to 'XC Trade'/'Transformer' in the
+    # first place (e.g. PEU01_03 "Electricity Export to EU": category='XC
+    # Trade', subsector='Power NL'; PNL04_01 "Electricity Import from EU":
+    # category='XC Trade', subsector='Power EU' - neither subsector value
+    # matches the check above). Confirmed live: without this, both fall
+    # through to the plain-consumer bucket below instead - export then gets
+    # treated as a FIXED, exogenously-decided quantity immune to domestic
+    # price signals (keeps growing to its own ceiling regardless of how
+    # severe a domestic shortage gets), and import stays locked at exactly
+    # zero for the entire horizon, since neither ever enters the
+    # price-spread-driven dispatch this function exists to drive. Scoped to
+    # tech_elec_coord so a same-category trade technology for a different
+    # commodity (e.g. gas, hydrogen) doesn't get pulled into electricity
+    # dispatch by category alone.
+    tech_interconnectors_coord = (
+        np.isin(np.array(tech_subsector), ['XC Trade', 'Transformer']) |
+        ((np.array(tech_category) == 'XC Trade') & tech_elec_coord)
+    )
     nG = np.sum(tech_generators_coord)
 
     # Preallocate targets
@@ -98,6 +120,15 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     generator_techs = [t for t in tech_entities if tech_generators_coord[t.idx]]
     gen_vom = vom_cost[tech_generators_coord]
     tech_subsector = np.array(tech_subsector)
+    # Which of these nG generators are the VOLL/undispatched-electricity
+    # placeholder (subsector=='Undispatched', e.g. PNL_UD/PNL_UD_LV) rather
+    # than real generation - same order as generator_techs/activity_balance_gen
+    # since it's indexed by the same tech_generators_coord mask. Used by
+    # disp_power_generators.py to tell a node's REAL local capacity picture
+    # apart from "covered, but only because the VOLL backstop stepped in" -
+    # see that file's own comment on net_available_hourly for why this
+    # distinction has to exist.
+    gen_is_voll = (tech_subsector[tech_generators_coord] == 'Undispatched')
     activity_balance_gen = activity_balances[tech_generators_coord, :]
     generators_activity = tech_stock[tech_generators_coord] * cap2act[tech_generators_coord]
 
@@ -305,6 +336,7 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     # than undefined names when a dataset has no interconnectors at all.
     xc_to_idx = np.zeros(nI, dtype=int)
     xc_from_actidx = np.zeros(nI, dtype=int)
+    xc_from_elecidx = np.zeros(nI, dtype=int)
 
     # Interconnector VOM
     xc_vom = vom_cost[tech_interconnectors_coord]
@@ -330,6 +362,7 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
         xc_per_elec[iAk_to_arr, iAk_from_arr, np.arange(nI)] = True
         xc_to_idx = iAk_to_arr
         xc_from_actidx = from_idx_arr
+        xc_from_elecidx = iAk_from_arr
 
         # Efficiency - an interconnector whose activity_balances row has no
         # negative entry at all (from_idx_arr then falls back to argmax's
@@ -357,6 +390,6 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
             loadshifts_demand_hourly, bat_efficiency, bat_capacity, bat_volume,
             bat_per_elec, bat_vom, bat_stock,
             xc_efficiencies, xc_vom, xc_per_elec, xc_demand, xc_supply, elec_cogenerated,
-            xc_to_idx, xc_from_actidx,
+            xc_to_idx, xc_from_actidx, xc_from_elecidx, gen_is_voll,
             tech_generators_coord, tech_shedding_coord,
             tech_loadshifts_coord, tech_batteries_coord, tech_interconnectors_coord)
