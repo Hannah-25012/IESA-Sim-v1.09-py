@@ -58,15 +58,20 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
 
     # Begin the iterative loop
     elec_demand_hourly_new = elec_demand_hourly.copy()
+    # Per-node demand excluding interconnector/transformer terms (shedding,
+    # load-shifting and battery terms included) - the baseline a link's
+    # real gap/spare is measured against, see disp_power_generators.py.
+    elec_demand_ex_xc_hourly = elec_demand_hourly.copy()
     for iIp in range(nIp):
 
         # Dispatch generators
-        gen_use_hourly, elec_prices_hourly, net_available_hourly = disp_power_generators(
+        gen_use_hourly, elec_prices_hourly, net_available_hourly = disp_power_generators(  # = spare vs demand without link flows
             gen_vom, gen_balance_hourly, gen_availability_hourly,
             gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly_new,
             prices_hourly, voll,
             xc_to_idx, xc_from_actidx, xc_from_elecidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl,
-            shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom, gen_is_voll
+            shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom, gen_is_voll,
+            elec_demand_ex_xc_hourly
         )
 
         # Display iteration info for the last balancing loop
@@ -136,6 +141,8 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
             # Add battery demand
             if sum(tech_batteries_coord) > 0:
                 elec_demand_hourly_new[:, iAk] += bat_demand_elec_hourly[:, iAk]
+
+            elec_demand_ex_xc_hourly[:, iAk] = elec_demand_hourly_new[:, iAk]
 
             # Add interconnector demand and supply
             elec_demand_hourly_new[:, iAk] += (

@@ -66,6 +66,19 @@ def disp_power_interconnectors(xc_efficiencies, xc_vom, xc_per_elec, elec_prices
         abs_vec = 1
         active_spread = will_vec * abs_vec
 
+        # A genuine shortage at the "to" node (its own real fleet can't meet
+        # its demand even before this link carries anything - to_gap is
+        # measured ex-link, see disp_power_generators.py) must switch the link
+        # on regardless of the price spread. Price-only activation flips every
+        # iteration of disp_power.py's loop once the link works: carrying flow
+        # removes the shortage, which drops the "to" price below the "from"
+        # price, which switches the link off next iteration, which restores
+        # the shortage - so the final flow and the generator dispatch behind
+        # it end up from different iterations (confirmed: transformer flow
+        # rose 32 -> 165 PJ while LV VOLL rose, not fell).
+        to_gap = np.maximum(-net_available_hourly[:, to_Ak], 0.0)
+        active_spread = active_spread | (to_gap > 0)
+
         # A positive spread only says trading is *profitable* that hour, not
         # how much to trade - dispatching the full nominal capacity every
         # such hour regardless of actual need was harmless while capacity
@@ -78,7 +91,6 @@ def disp_power_interconnectors(xc_efficiencies, xc_vom, xc_per_elec, elec_prices
         # actually has spare - never more than either side's real physical
         # position, converted to a common ("from"-side draw) basis via the
         # interconnector's own efficiency.
-        to_gap = np.maximum(-net_available_hourly[:, to_Ak], 0.0)
         from_surplus = np.maximum(net_available_hourly[:, from_Ak], 0.0)
         to_gap_as_draw = to_gap / xc_efficiencies[iI]
         capped_draw = np.minimum(to_gap_as_draw, from_surplus)

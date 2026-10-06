@@ -5,7 +5,8 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
                           gen_xc_costs_hourly, gen_per_elec, elec_demand_hourly,
                           prices_hourly, voll,
                           xc_to_idx, xc_from_actidx, xc_from_elecidx, xc_supply, xc_efficiencies, xc_vom, elec_is_nl,
-                          shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom, gen_is_voll):
+                          shed_per_elec, shed_maxdemand_hourly, shed_mindemand_hourly, shed_vom, gen_is_voll,
+                          elec_demand_ex_xc_hourly):
 
 # ========== Explanation ===============================================
 # This function presents a merit order approach to determine prices per
@@ -60,6 +61,7 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
     # can actually spare), instead of dispatching its full nominal capacity
     # whenever merely profitable to use at all.
     net_available_hourly = np.zeros((nH, nAk))
+    spare_ex_xc_hourly = np.zeros((nH, nAk))
     hours = np.arange(nH)
 
     # Per-node values needed by the relief/VOLL pass below, stashed here so
@@ -125,9 +127,24 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
         MOC_volume_real = np.cumsum(np.take_along_axis(gen_available_real, MOC_order_real, axis=1), axis=1)
         meets_demand_real = MOC_volume_real >= demand[:, None]
         any_meets_real = meets_demand_real.any(axis=1)
-        MOC_last_gen_real = np.where(any_meets_real, meets_demand_real.argmax(axis=1), nG - 1)
-        MOC_volume_at_last_real = MOC_volume_real[hours, MOC_last_gen_real]
-        net_available_hourly[:, iAk] = MOC_volume_at_last_real - demand
+        # Total real capacity (every real generator at full availability),
+        # not the volume at the marginal generator: the marginal generator's
+        # unused slack is only the headroom ABOVE what is already dispatched
+        # and ignores every more expensive generator still sitting idle
+        # (confirmed on a merged 2022 run: 15 GW of CCGT dispatched 0.0 PJ
+        # while the LV node sat at VOLL in 90% of hours, because the HV->LV
+        # transformer's cap was this marginal-only slack). Identical to the
+        # marginal-volume form whenever real supply can't meet demand (all
+        # real generators are then "online"), so the shortage/gap side is
+        # unchanged - only the surplus side now sees the idle fleet.
+        total_real_capacity = MOC_volume_real[:, -1]
+        net_available_hourly[:, iAk] = total_real_capacity - demand
+        # Same spare, but against demand WITHOUT the interconnector/
+        # transformer terms of the previous iteration. What a link can carry
+        # must not shrink just because the previous iteration already routed
+        # flow through it (that flow is in `demand` via disp_power.py's
+        # iteration) - otherwise flow oscillates between iterations.
+        spare_ex_xc_hourly[:, iAk] = total_real_capacity - elec_demand_ex_xc_hourly[:, iAk]
 
         iG_marginal = MOC_order[hours, MOC_last_gen]
 
@@ -206,7 +223,7 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
                     # surplus-bounded flow later delivers far less - leaving
                     # demand genuinely unserved without ever pricing at VOLL.
                     nominal_relief = -xc_supply[:, iI_here]
-                    from_surplus = np.maximum(net_available_hourly[:, xc_from_elecidx[iI_here]], 0.0)
+                    from_surplus = np.maximum(spare_ex_xc_hourly[:, xc_from_elecidx[iI_here]], 0.0)
                     from_surplus_as_relief = from_surplus * xc_efficiencies[iI_here, 0][None, :]
                     relief_capacity_parts.append(np.minimum(nominal_relief, from_surplus_as_relief))
                     from_prices = prices_hourly[:, xc_from_actidx[iI_here]]  # (nH, nI)
@@ -248,4 +265,4 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
 
         elec_prices_hourly[:, iAk] = np.where(voll_true, voll, marginal_cost)
 
-    return gen_use_hourly, elec_prices_hourly, net_available_hourly
+    return gen_use_hourly, elec_prices_hourly, spare_ex_xc_hourly
