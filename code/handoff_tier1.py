@@ -395,3 +395,114 @@ def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, 
         }
     finally:
         con.close()
+
+
+def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harvest: int) -> dict:
+    """Write `out_db` = `merged_db` seeded with a PREVIOUS Sim run's own
+    realized stock at `start`, sliced to the leg [start, harvest].
+
+    The receding-horizon Sim legs used to be warm-started from Opt's stock
+    (seed_from_opt). That made Sim operate a fleet it never chose (and booked
+    the seeded stock as new investment in its first period). Here Opt supplies
+    only the price trajectory (foresight_source='opt'), and the stock each leg
+    continues from is Sim's own - the fleet its previous round actually built.
+
+    Same target edits as seed_from_opt (stock_initial for technologies and
+    infrastructure, dec_planned cleared up to `start`, period grid sliced so
+    `start` becomes iP==0). Source ids: Sim's result DB already uses the
+    merged DB's own `id` for every technology without a sim_id override, so
+    the join is COALESCE(sim_id, id) = tech_id, same bridge seed_from_sim
+    uses in the other direction. Infrastructure stock comes from the
+    `infrastructure_stock` table of the per-run DB (written by
+    save_excel_duckdb); a run saved before that table existed leaves
+    infrastructure at the merged DB's own initial values and the report says so.
+
+    Never mutates `merged_db`. Raises ValueError on a fatal precondition.
+    """
+    for p in (sim_db, merged_db):
+        if not os.path.isfile(p):
+            raise ValueError(f"not found: {p}")
+    S, H = int(start), int(harvest)
+    if S >= H:
+        raise ValueError(f"start ({S}) must be before harvest ({H}).")
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_db)), exist_ok=True)
+    shutil.copyfile(merged_db, out_db)
+    con = duckdb.connect(out_db)
+    try:
+        con.execute(f"ATTACH '{sim_db}' AS sim_res (READ_ONLY)")
+        sim_tables = {r[0] for r in con.execute("show tables from sim_res").fetchall()}
+        stock_tbl = pick_stock_table(sim_tables)
+
+        sim_periods = [r[0] for r in con.execute(
+            f"select distinct period from sim_res.{stock_tbl} order by period").fetchall()]
+        if S not in sim_periods:
+            raise ValueError(f"start {S} not in the Sim run's periods {sim_periods}.")
+        start_total = con.execute(
+            f"select coalesce(sum(abs(stock)), 0) from sim_res.{stock_tbl} where period = {S}").fetchone()[0]
+        if start_total == 0:
+            raise ValueError(f"Sim stock at {S} is all-zero - that period was not simulated.")
+        db_periods = [r[0] for r in con.execute("select period from periods order by period").fetchall()]
+        missing = [y for y in (S, H) if y not in db_periods]
+        if missing:
+            raise ValueError(f"period(s) {missing} not in the merged DB's own periods {db_periods}.")
+
+        tech_cols = {r[0] for r in con.execute(
+            "select column_name from information_schema.columns where table_name = 'technologies'").fetchall()}
+        # Sim reads the merged DB and keys its own results by technologies.id
+        # (sim_id is only the bridge to NATIVE Sim ids, not what a merged-DB run
+        # writes) - joining on coalesce(sim_id, id) silently skipped every aliased
+        # technology (51 of 401 on the current merged DB).
+        tech_key = "t.id"
+        matched = con.execute(f"""
+            select count(*) from technologies t
+            join sim_res.{stock_tbl} s on s.tech_id = {tech_key} and s.period = {S}
+        """).fetchone()[0]
+        con.execute(f"""
+            update technologies t set stock_initial = s.stock
+            from sim_res.{stock_tbl} s
+            where s.tech_id = {tech_key} and s.period = {S}
+        """)
+
+        infra_matched = 0
+        if "infrastructure_stock" in sim_tables:
+            infra_cols = {r[0] for r in con.execute(
+                "select column_name from information_schema.columns where table_name = 'infrastructure'").fetchall()}
+            infra_key = "i.id"
+            infra_matched = con.execute(f"""
+                select count(*) from infrastructure i
+                join sim_res.infrastructure_stock s on s.infra_id = {infra_key} and s.period = {S}
+            """).fetchone()[0]
+            con.execute(f"""
+                update infrastructure i set stock_initial = s.stock
+                from sim_res.infrastructure_stock s
+                where s.infra_id = {infra_key} and s.period = {S}
+            """)
+
+        decom_cleared = con.execute(
+            f"select count(*) from technology_stocks where dec_planned is not null and period <= {S}"
+        ).fetchone()[0]
+        con.execute(f"update technology_stocks set dec_planned = NULL where period <= {S}")
+
+        con.execute(f"delete from periods where period < {S} or period > {H}")
+        con.execute("""
+            update periods set period_order = sub.new_order
+            from (select period, row_number() over (order by period) - 1 as new_order
+                  from periods) sub
+            where periods.period = sub.period
+        """)
+        period_grid = [r[0] for r in con.execute(
+            "select period from periods order by period_order").fetchall()]
+
+        return {
+            "start": S,
+            "harvest": H,
+            "seeded_technologies": matched,
+            "seeded_infrastructure": infra_matched,
+            "dec_planned_cleared": decom_cleared,
+            "period_grid": period_grid,
+            "infrastructure_carried": infra_matched > 0,
+            "source": "sim",
+        }
+    finally:
+        con.close()

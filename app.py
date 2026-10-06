@@ -95,7 +95,7 @@ if _code_dir not in sys.path:
 from main import main as run_simulation  # noqa: E402  (path setup must run first; also puts code/read/ on sys.path)
 from mod0_read_data_save_duck import mod0_read_data_save_duck  # noqa: E402
 from compat_check import check_sim_compatibility  # noqa: E402
-from handoff_tier1 import seed_from_sim, seed_from_opt  # noqa: E402  (Tier-1 Sim<->Opt stock hand-off; see run-handoff.html)
+from handoff_tier1 import seed_from_sim, seed_from_opt, seed_sim_from_sim  # noqa: E402  (Tier-1 Sim<->Opt stock hand-off; see run-handoff.html)
 
 app = FastAPI()
 app.add_middleware(
@@ -554,6 +554,39 @@ def handoff_reverse(req: HandoffReverseRequest):
     except ValueError as e:
         # Precondition failures (all-zero start year, missing period, ...) are
         # user-actionable, not server faults - surface the message verbatim.
+        raise HTTPException(400, str(e))
+
+    _handoff_files[token] = out_db
+    return {"token": token, "seeded_db": os.path.basename(out_db), "report": report}
+
+
+class HandoffSimContinueRequest(BaseModel):
+    sim_scenario: str          # a finished Sim run's output/<scenario_name>/ dir - the fleet to continue from
+    merged_db: str             # path returned by POST /input_db (the pristine merged DB to seed)
+    start: int                 # the period of that run whose stock seeds the next leg
+    harvest: int               # the next leg's year_end
+
+
+# Sim -> Sim continuation for the receding-horizon legs: the next leg resumes
+# from the stock the PREVIOUS Sim leg itself realized at `start`, while Opt
+# contributes only prices (foresight_source='opt' on the /run that follows) -
+# unlike /handoff/reverse, which seeds Sim with Opt's stock.
+@app.post("/handoff/sim_continue")
+def handoff_sim_continue(req: HandoffSimContinueRequest):
+    scen_dir = Path("output") / req.sim_scenario
+    excel_db = scen_dir / "simulation_excel.duckdb"
+    if not excel_db.exists():
+        raise HTTPException(404, f"No Sim output for scenario {req.sim_scenario!r} (looked for {excel_db}).")
+    if not os.path.isfile(req.merged_db):
+        raise HTTPException(400, f"merged_db not found: {req.merged_db!r} "
+                                 f"(upload it via POST /input_db first).")
+
+    os.makedirs(_HANDOFF_DIR, exist_ok=True)
+    token = str(uuid.uuid4())
+    out_db = os.path.join(_HANDOFF_DIR, f"{token}_simcont_{req.start}_{req.harvest}.duckdb")
+    try:
+        report = seed_sim_from_sim(str(excel_db), req.merged_db, out_db, req.start, req.harvest)
+    except ValueError as e:
         raise HTTPException(400, str(e))
 
     _handoff_files[token] = out_db

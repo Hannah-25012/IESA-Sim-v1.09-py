@@ -471,6 +471,16 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
         _long2(tech_ids, "tech_id", periods, "period", technologies.balancers.investments, "investment"),
         pk=["tech_id", "period"], fks=[("tech_id", "technologies", "id"), ("period", "periods", "period")])
 
+    # Infrastructure stock per period (small: one row per infrastructure
+    # technology and period). Lets a later leg resume from this run's own
+    # realized infrastructure (handoff_tier1.seed_sim_from_sim) without the
+    # heavy full-state dump (save_state_duckdb), which is what carries it
+    # otherwise.
+    infra_ids = [i.id for i in technologies.infra.entities]
+    _save_table(con, "infrastructure_stock",
+        _long2(infra_ids, "infra_id", periods, "period", technologies.infra.stocks.evolution, "stock"),
+        pk=["infra_id", "period"], fks=[("period", "periods", "period")])
+
     # === sectoral balance (consumption/production per sector+energy label) ===
     coord_categories = np.array([t.category not in ('Primary', 'Emission', 'Exports') for t in tech_entities])
     tech_sector = np.array([t.sector for t in tech_entities])
