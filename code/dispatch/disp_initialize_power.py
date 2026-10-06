@@ -136,6 +136,28 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     # generator, all at once instead of a per-generator Python loop.
     gen_elec_idx = np.array([gen.activity.elec_idx for gen in generator_techs])
     gen_act_idx = np.array([gen.activity.idx for gen in generator_techs])
+
+    # A generator's node is normally its declared primary activity - but a
+    # data row can declare one electricity node while its own balance
+    # produces onto ANOTHER (confirmed: IESA-Opt's own native PNL01_17
+    # "Solar PV - Rest" has activity 'Electricity NL - LV' yet its only
+    # electricity balance is +1.0 on 'Electricity NL - HV'). Dispatching it
+    # on the declared node leaves its real output balance on the other
+    # node, which then gets zeroed out below only for the declared one, so
+    # that leftover +1.0 is priced as revenue in the merit-order cost
+    # (vom - balance*price): at HV price P the "generator" costs -P, sits at
+    # the bottom of the LV merit order, and sets the LV price to -P (-9999.6
+    # EUR/MWh whenever HV hit VOLL). Follow the balance instead: when the
+    # declared activity carries no balance for this generator and exactly one
+    # electricity activity has a positive one, that activity is its node.
+    act_elec_idx = np.array([a.elec_idx if a.elec_idx is not None else -1 for a in activities.entities])
+    is_elec_act = act_elec_idx >= 0
+    declared_balance = activity_balance_gen[np.arange(nG), gen_act_idx]
+    positive_elec = (activity_balance_gen > 0) & is_elec_act[None, :]
+    for iG in np.where((declared_balance == 0) & (positive_elec.sum(axis=1) == 1))[0]:
+        gen_act_idx[iG] = np.argmax(positive_elec[iG])
+        gen_elec_idx[iG] = act_elec_idx[gen_act_idx[iG]]
+
     gen_per_elec[np.arange(nG), gen_elec_idx] = True
     activity_balance_gen[np.arange(nG), gen_act_idx] = 0
 
