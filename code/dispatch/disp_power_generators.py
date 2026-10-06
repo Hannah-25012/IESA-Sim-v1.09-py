@@ -174,7 +174,21 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
         voll_true = voll_true_by_node[:, iAk]
         marginal_cost = marginal_cost_by_node[:, iAk]
         demand = elec_demand_hourly[:, iAk]
-        MOC_volume_at_last = demand + net_available_hourly[:, iAk]
+        # Price a shortage by what the node's own fleet can't cover WITHOUT
+        # link flows (spare_ex_xc < 0), not by the residual after the
+        # previous iteration's flows were already netted off its demand.
+        # Otherwise, once a link works (e.g. the HV->LV transformer), the
+        # flow removes the shortage from the local merit order, the node's
+        # own cheapest generator (a negative-cost CHP with a heat credit)
+        # ends up marginal, and the node clears at a NEGATIVE price (LV
+        # median -162 EUR/MWh in 2022) although every hour is being served
+        # by imports that cost the sender's price. In those hours the import
+        # is the marginal supply, so it must set the price (relief price, or
+        # VOLL if relief can't close the gap).
+        if elec_is_nl[iAk]:
+            shortage_ex_xc = spare_ex_xc_hourly[:, iAk] < 0
+            voll_true = voll_true | shortage_ex_xc
+        gap_ex_xc = -spare_ex_xc_hourly[:, iAk]
 
         # Before falling back to VOLL: a node whose own generator fleet can't
         # meet demand may still have a connected interconnector/transformer,
@@ -245,7 +259,7 @@ def disp_power_generators(gen_vom, gen_balance_hourly, gen_availability_hourly,
 
                 relief_order = np.argsort(relief_cost, axis=1, kind='stable')
                 relief_cum = np.cumsum(np.take_along_axis(relief_capacity, relief_order, axis=1), axis=1)
-                gap = demand - MOC_volume_at_last
+                gap = gap_ex_xc
                 relief_meets = relief_cum >= gap[:, None]
                 relief_any_meets = relief_meets.any(axis=1)
                 relief_last = np.where(relief_any_meets, relief_meets.argmax(axis=1), relief_cost.shape[1] - 1)
