@@ -66,6 +66,33 @@ def results_system_costs(dimensions, parameters, activities, technologies, resul
         for infra in infra_entities:
             system_costs[cost_coord, iP] += annuity_fact_infra[infra.idx] * tech_stock_infra[infra.idx, iP] * inv_cost_infra[infra.idx, iP]
 
+    # Capital cost of NEW investments only, reported next to (not instead of)
+    # the whole-stock 'capital' line above. IESA-Opt charges an annuity only
+    # on investments made in its decision periods (each vintage for as long
+    # as it lives, retrofits likewise) and treats the initial stock as sunk,
+    # whereas the stock-based line above also bills every asset that already
+    # existed in the base year (cars, planes, refineries ...: ~40 of Sim's
+    # 50 BEUR in 2022 on the merged database). This line applies Opt's rule
+    # to Sim's own investments so the two engines' capital costs compare
+    # like for like. Kept out of results.costs.system / cost_categories on
+    # purpose: it is an alternative view of 'capital', and adding it as a
+    # category would double-count it in every total. Infrastructure
+    # technologies are left out (they have no investment history here).
+    periods_years = np.array(activities.periods, dtype=float)
+    tech_investments = technologies.balancers.investments
+    tech_lifetimes = np.asarray(technologies.balancers.costs.lifetimes, dtype=float)
+    not_placeholder = np.array([not (t.subsector == 'Undispatched' or t.name.startswith('Indirect - '))
+                                for t in tech_entities])
+    capital_new = np.zeros(nP)
+    for iP in range(nP):
+        for iJ in range(iP + 1):
+            # A vintage built in period iJ is charged in every period it is
+            # still alive (age < lifetime), same window as Opt's InvMat_lifeTime.
+            alive = (periods_years[iP] - periods_years[iJ]) < tech_lifetimes
+            capital_new[iP] += np.sum(alive * not_placeholder * annuity_fact
+                                      * tech_investments[:, iJ] * inv_cost[:, iJ])
+    results.costs.capital_new_investment = capital_new
+
     # Fixed costs
     cost_coord = np.array(cost_categories) == 'fixed operational'
     system_costs[cost_coord, :] = np.sum(tech_stock * fom_cost, axis=0)

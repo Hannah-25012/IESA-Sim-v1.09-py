@@ -425,6 +425,15 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
         _long2(results.costs.categories, "cost_category", periods, "period", results.costs.system / 1000, "cost_beur"),
         pk=["cost_category", "period"], fks=[("period", "periods", "period")])
 
+    # === capital cost of new investments only (B€/y) - an alternative view of
+    # system_costs' 'capital' line (IESA-Opt's convention), NOT an extra cost
+    # category; see results_system_costs.py ===
+    capital_new = getattr(results.costs, "capital_new_investment", None)
+    if capital_new is not None:
+        _save_table(con, "capital_new_investment",
+            pd.DataFrame({"period": periods, "cost_beur": np.asarray(capital_new).reshape(-1) / 1000}),
+            pk="period", fks=[("period", "periods", "period")])
+
     # === system_emissions (Mton CO2eq) ===
     _save_table(con, "system_emissions",
         pd.DataFrame({"period": periods, "emissions_mton": np.asarray(results.emissions).reshape(-1)}),

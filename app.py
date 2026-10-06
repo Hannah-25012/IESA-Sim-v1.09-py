@@ -278,7 +278,7 @@ def _build_settings(overrides: Optional[dict]) -> dict:
 # out of the default payload since live job results (_run_job) and the
 # existing single-scenario Load path only ever need the cheap 3, while
 # multi-scenario comparison (run.html's Compare flow) wants more per call.
-_EXTRA_OUTPUT_SERIES = {"sectoral_emissions", "technology_stock", "technology_use", "prices", "primary_energy"}
+_EXTRA_OUTPUT_SERIES = {"sectoral_emissions", "technology_stock", "technology_use", "prices", "primary_energy", "capital_new_investment"}
 
 
 def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -> dict:
@@ -326,6 +326,15 @@ def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -
         # Primary energy supply per energy label in PJ - the same series
         # graph_primaryEnergy.py draws for the original Sim graph. Runs saved
         # before this table existed simply report none.
+        # Capital of NEW investments only (Opt's convention) - an alternative
+        # to system_costs' stock-based 'capital' line, not an addition to it.
+        if "capital_new_investment" in extra:
+            try:
+                result["capital_new_investment"] = rows(
+                    "SELECT period, cost_beur FROM capital_new_investment ORDER BY period")
+            except duckdb.Error:
+                result["capital_new_investment"] = []
+
         if "primary_energy" in extra:
             try:
                 result["primary_energy"] = rows(
