@@ -1,4 +1,5 @@
 # File to determine the power dispatch
+import os
 import numpy as np
 from disp_initialize_power import disp_initialize_power
 from disp_power_generators import disp_power_generators
@@ -6,6 +7,15 @@ from disp_power_shedding import disp_power_shedding
 from disp_power_loadshifting import disp_power_loadshifting
 from disp_power_batteries import disp_power_batteries
 from disp_power_interconnectors import disp_power_interconnectors
+
+# Blend factor between the previous and the newly computed hourly demand each
+# iteration of the power-dispatch loop: 1.0 = jump straight to the new demand
+# (original behaviour), smaller = damped. Price-responsive demand (shedding,
+# load-shifting, batteries) reacts to the price the generators just produced,
+# which depends on the demand they were given, so a full jump can cycle
+# between two states every iteration instead of settling. Override with the
+# IESA_DEMAND_RELAXATION environment variable for experiments.
+DEMAND_RELAXATION = float(os.environ.get("IESA_DEMAND_RELAXATION", "1.0"))
 
 def disp_power(dimensions, parameters, activities, technologies, profiles, tech_use_hourly, prices_hourly, iP, nId):
 
@@ -58,6 +68,7 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
 
     # Begin the iterative loop
     elec_demand_hourly_new = elec_demand_hourly.copy()
+    bat_demand_elec_hourly = np.zeros((nH, nAk))  # batteries' previous-iteration demand (none yet)
     # Per-node demand excluding interconnector/transformer terms (shedding,
     # load-shifting and battery terms included) - the baseline a link's
     # real gap/spare is measured against, see disp_power_generators.py.
@@ -85,11 +96,27 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
                 print(f"{(sum(elec_demand_hourly_new[:, iAk]) + elec_cogenerated[iAk, 0]) / 3.6:24.2f}", end='')
             print()
 
-        # Dispatch shedding technologies
-        if sum(tech_shedding_coord):
+        # Dispatch shedding technologies - ONCE, in the first iteration, then
+        # frozen. Re-deciding the schedule from every iteration's prices makes
+        # it chase prices that move because of that very schedule (all
+        # flexible consumers pile onto the cheapest hours, those hours turn
+        # into shortages and price spikes, the schedule flips away, prices
+        # collapse, it flips back - a period-2 cycle the iteration count only
+        # freezes at a random phase). The schedule is built from the first
+        # iteration's prices and each node's real spare generation after all
+        # minimum demands are reserved, so it never creates a shortage that
+        # was not already there - the simulation counterpart of IESA-Opt's
+        # shedding being a bounded term inside the hourly balance.
+        if sum(tech_shedding_coord) and iIp == 0:
+            spare_for_shedding = np.array(net_available_hourly, dtype=float, copy=True)
+            for iAk in range(nAk):
+                on_node = shed_per_elec[:, iAk]
+                if on_node.any():
+                    spare_for_shedding[:, iAk] -= shed_mindemand_hourly[:, on_node].sum(axis=1)
             shed_use_hourly = disp_power_shedding(
                 shed_guarantee, shed_maxvolume_hourly,
-                shed_minvolume_hourly, shed_per_elec, elec_prices_hourly
+                shed_minvolume_hourly, shed_per_elec, elec_prices_hourly,
+                shed_maxdemand_hourly, shed_mindemand_hourly, spare_for_shedding
             )
 
         # Dispatch load-shifting technologies
@@ -102,9 +129,24 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
 
         # Dispatch batteries
         if sum(tech_batteries_coord) > 0:
+            # Charging only where the node has real surplus (Opt's hourly
+            # balance never lets storage charge into a shortage). The spare
+            # is measured WITHOUT the batteries' own previous demand - the
+            # surplus they would charge from - so it does not move when the
+            # batteries do. Every battery on a node reserves the node's full
+            # combined charging power together, so they cannot all claim
+            # the same spare hour.
+            safe_bat_eff = np.where(np.asarray(bat_efficiency, dtype=float) != 0, bat_efficiency, 1.0)
+            bat_charge_power = np.asarray(bat_stock, dtype=float) * np.asarray(bat_capacity, dtype=float) / safe_bat_eff
+            bat_node = np.array([np.where(bat_per_elec[iB, :])[0][0] for iB in range(len(bat_stock))])
+            node_charge_power = np.zeros(nAk)
+            np.add.at(node_charge_power, bat_node, bat_charge_power)
+            spare_ex_battery = net_available_hourly + bat_demand_elec_hourly
+            bat_charge_allowed = spare_ex_battery[:, bat_node] >= node_charge_power[bat_node][None, :]
             bat_use_hourly, bat_demand_elec_hourly = disp_power_batteries(
                 bat_efficiency, bat_capacity, bat_volume,
-                bat_vom, bat_stock, bat_per_elec, elec_prices_hourly, min_spread
+                bat_vom, bat_stock, bat_per_elec, elec_prices_hourly, min_spread,
+                bat_charge_allowed
             )
 
         # Dispatch interconnectors
@@ -113,7 +155,13 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         )
 
         # Adjust demand for each electricity activity
+        conv_change = 0.0
+        conv_total = 0.0
+        conv_ex = 0.0
+        conv_xc = 0.0
         for iAk in range(nAk):
+            prev_demand_new = elec_demand_hourly_new[:, iAk].copy()
+            prev_demand_ex_xc = elec_demand_ex_xc_hourly[:, iAk].copy()
 
             # Identify shedding technologies and interconnectors in the node
             is_shedding = shed_per_elec[:, iAk]
@@ -150,6 +198,20 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
             ).sum(axis=1) + (
                 xc_supply[:, is_interconnect_to.ravel()] * xc_use_hourly[:, is_interconnect_to.ravel()]
             ).sum(axis=1)
+
+            conv_change += np.abs(elec_demand_hourly_new[:, iAk] - prev_demand_new).sum()
+            conv_total += np.abs(elec_demand_hourly_new[:, iAk]).sum()
+            conv_ex += np.abs(elec_demand_ex_xc_hourly[:, iAk] - prev_demand_ex_xc).sum()
+            conv_xc += np.abs((elec_demand_hourly_new[:, iAk] - elec_demand_ex_xc_hourly[:, iAk]) - (prev_demand_new - prev_demand_ex_xc)).sum()
+            if DEMAND_RELAXATION != 1.0:
+                elec_demand_hourly_new[:, iAk] = prev_demand_new + DEMAND_RELAXATION * (elec_demand_hourly_new[:, iAk] - prev_demand_new)
+                elec_demand_ex_xc_hourly[:, iAk] = prev_demand_ex_xc + DEMAND_RELAXATION * (elec_demand_ex_xc_hourly[:, iAk] - prev_demand_ex_xc)
+
+        # Relative demand change this iteration (0 = settled) - one line per
+        # iteration so the number of passes needed to converge can be read
+        # straight off the log.
+        if nId:
+            print(f"CONV iP={iP} iter={iIp} relax={DEMAND_RELAXATION} resid={conv_change / max(conv_total, 1e-12):.5f} ex_xc={conv_ex / max(conv_total, 1e-12):.5f} links={conv_xc / max(conv_total, 1e-12):.5f}", flush=True)
 
     # Display message
     if nId:

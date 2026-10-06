@@ -2,7 +2,8 @@
 import numpy as np
 
 def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
-                        bat_vom, bat_stock, bat_per_elec, elec_prices_hourly, min_spread):
+                        bat_vom, bat_stock, bat_per_elec, elec_prices_hourly, min_spread,
+                        charge_allowed_hourly=None):
 
 #  ========== Explanation ===============================================
 # This function presents a DP optimization approach to determine operation
@@ -91,6 +92,12 @@ def disp_power_batteries(bat_efficiency, bat_capacity, bat_volume,
     # Price calculation (each battery's own node's price, for every hour at once)
     price_hourly = elec_prices_hourly[:, iAk_per_battery]  # (nH, nB)
     charge_cashflow_hourly = price_hourly * charge_vec[None, :]
+    # Optional (nH, nB) mask: hours in which a battery's node has no real
+    # surplus to charge from. Charging there is firewalled off exactly like
+    # the other never-allowed states, so storage can only soak up surplus -
+    # it can never be the extra demand that pushes an hour into shortage.
+    if charge_allowed_hourly is not None:
+        charge_cashflow_hourly = np.where(charge_allowed_hourly, charge_cashflow_hourly, -1e6)
     discharge_cashflow_hourly = (price_hourly - min_spread - vom_vec[None, :]) * discharge_vec[None, :]
 
     for iH in range(nH - 1, -1, -1):
