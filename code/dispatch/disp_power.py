@@ -143,11 +143,27 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
             np.add.at(node_charge_power, bat_node, bat_charge_power)
             spare_ex_battery = net_available_hourly + bat_demand_elec_hourly
             bat_charge_allowed = spare_ex_battery[:, bat_node] >= node_charge_power[bat_node][None, :]
-            bat_use_hourly, bat_demand_elec_hourly = disp_power_batteries(
+            bat_use_new, bat_demand_new = disp_power_batteries(
                 bat_efficiency, bat_capacity, bat_volume,
                 bat_vom, bat_stock, bat_per_elec, elec_prices_hourly, min_spread,
                 bat_charge_allowed
             )
+            # Running average of the batteries' schedule over the passes
+            # (weight 1/(pass+1): the first pass is taken whole, each later
+            # one counts a little less). A battery plans against the previous
+            # pass's prices, and its own schedule is what moved those prices,
+            # so taking each best response in full makes the whole fleet flip
+            # between two opposite schedules every pass (2030, when storage
+            # jumps from ~0.3 to ~25 GW in one period: demand change per pass
+            # ~2x the total battery demand). Averaging the schedule is the
+            # standard remedy for price-taking best-response loops and lets
+            # the price/schedule pair settle instead of flipping.
+            if iIp == 0 or 'bat_use_hourly' not in locals():
+                bat_use_hourly, bat_demand_elec_hourly = bat_use_new, bat_demand_new
+            else:
+                w_avg = 1.0 / (iIp + 1)
+                bat_use_hourly = bat_use_hourly + w_avg * (bat_use_new - bat_use_hourly)
+                bat_demand_elec_hourly = bat_demand_elec_hourly + w_avg * (bat_demand_new - bat_demand_elec_hourly)
 
         # Dispatch interconnectors
         xc_use_hourly = disp_power_interconnectors(
