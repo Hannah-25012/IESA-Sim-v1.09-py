@@ -438,6 +438,11 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
         ], axis=1),
         pk=["sector", "period"], fks=[("period", "periods", "period")])
 
+    # === primary_energy (PJ/y per energy label, as in graph_primaryEnergy.py) ===
+    _save_table(con, "primary_energy",
+        _long2(types.energy.labels, "energy_label", periods, "period", results.primary, "primary_pj"),
+        pk=["energy_label", "period"], fks=[("period", "periods", "period")])
+
     # === policy_cashflows (B€/y) ===
     _save_table(con, "policy_cashflows",
         _long2(types.policy_cashflows_categories, "cashflow_category", periods, "period",

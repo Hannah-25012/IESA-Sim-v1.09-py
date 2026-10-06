@@ -278,7 +278,7 @@ def _build_settings(overrides: Optional[dict]) -> dict:
 # out of the default payload since live job results (_run_job) and the
 # existing single-scenario Load path only ever need the cheap 3, while
 # multi-scenario comparison (run.html's Compare flow) wants more per call.
-_EXTRA_OUTPUT_SERIES = {"sectoral_emissions", "technology_stock", "technology_use", "prices"}
+_EXTRA_OUTPUT_SERIES = {"sectoral_emissions", "technology_stock", "technology_use", "prices", "primary_energy"}
 
 
 def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -> dict:
@@ -322,6 +322,16 @@ def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -
                 SELECT t.name, t.sector, t.category, t.subsector, ts.period, ts.stock
                 FROM technology_stock ts JOIN technologies t ON t.id = ts.tech_id
                 ORDER BY t.sector, t.name, ts.period""")
+
+        # Primary energy supply per energy label in PJ - the same series
+        # graph_primaryEnergy.py draws for the original Sim graph. Runs saved
+        # before this table existed simply report none.
+        if "primary_energy" in extra:
+            try:
+                result["primary_energy"] = rows(
+                    "SELECT energy_label, period, primary_pj AS value FROM primary_energy ORDER BY period, energy_label")
+            except duckdb.Error:
+                result["primary_energy"] = []
 
         if "technology_use" in extra:
             result["technology_use"] = rows("""
