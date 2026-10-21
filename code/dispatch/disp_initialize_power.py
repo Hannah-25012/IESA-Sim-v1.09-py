@@ -177,6 +177,16 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
     gen_profile_matrix = np.column_stack([profile_shape_by_type[gen.profile] for gen in generator_techs])  # (nH, nG)
     gen_availability_hourly[:, :] = gen_profile_matrix * generators_activity[None, :]
 
+    # Annual use ceiling (technology_stocks.use_max) for generators: scale the
+    # hourly availability so its annual total cannot exceed it.
+    _use_max = getattr(technologies.balancers.stocks, 'use_max', None)
+    if _use_max is not None:
+        _gen_cap = _use_max[tech_generators_coord, iP]
+        for iG in np.where(np.isfinite(_gen_cap))[0]:
+            _avail = gen_availability_hourly[:, iG].sum()
+            if _avail > _gen_cap[iG] > 0:
+                gen_availability_hourly[:, iG] *= _gen_cap[iG] / _avail
+
     # Byproduct-fuel generators (CCGT BFG burns the steelworks' blast-furnace
     # gas). That gas is a byproduct: whatever the steel route produces is
     # burnt in the plant or flared, and flaring emits the same CO2. So the

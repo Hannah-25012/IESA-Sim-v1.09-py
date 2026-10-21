@@ -28,6 +28,12 @@ def disp_energy_balance(dimensions, activities, technologies, profiles, tech_use
     coord_emission_act = np.array([a.is_emission for a in activities.entities])
 
     # Iterate in a loop
+    # Annual use ceiling per technology for this period (technology_stocks.use_max,
+    # NaN = none), e.g. real-world biomass use caps for already-past years. Binds
+    # on top of stock x cap2act; use_min is not enforced here.
+    stocks_obj = technologies.balancers.stocks
+    tech_use_cap = getattr(stocks_obj, 'use_max', None)
+    tech_use_cap = None if tech_use_cap is None else tech_use_cap[:, iP]
     tech_use = np.sum(tech_use_hourly, axis=0)
     tech_use_delta = np.zeros((nTb, nIb))  # Preallocate (in units of activity)
     for iI in range(nIb):
@@ -44,6 +50,8 @@ def disp_energy_balance(dimensions, activities, technologies, profiles, tech_use
 
                 # Calculate the remaining use space of technologies
                 tech_use_max = tech_stock * cap2act
+                if tech_use_cap is not None:
+                    tech_use_max = np.where(np.isfinite(tech_use_cap), np.minimum(tech_use_max, tech_use_cap), tech_use_max)
                 rem_use = np.maximum(tech_use_max - tech_use, 0)
 
                 # Identify the involved technologies
