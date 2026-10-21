@@ -1,6 +1,10 @@
 # File to initialize power dispatch
 import numpy as np
 
+# Fuels that are a byproduct of another technology (see the must-run handling
+# in disp_initialize_power).
+BYPRODUCT_FUEL_ACTIVITIES = ('Blast Furnace Gas',)
+
 def disp_initialize_power(dimensions, activities, technologies, profiles, tech_use_hourly, iP):
 
     # Extract Parameters
@@ -172,6 +176,32 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
 
     gen_profile_matrix = np.column_stack([profile_shape_by_type[gen.profile] for gen in generator_techs])  # (nH, nG)
     gen_availability_hourly[:, :] = gen_profile_matrix * generators_activity[None, :]
+
+    # Byproduct-fuel generators (CCGT BFG burns the steelworks' blast-furnace
+    # gas). That gas is a byproduct: whatever the steel route produces is
+    # burnt in the plant or flared, and flaring emits the same CO2. So the
+    # plant is must-run up to the gas the steel technologies actually make,
+    # not a price-taker on a fuel price - dispatching it on the BFG price
+    # (135 vs an electricity price of 27-43) switched it off, 18.6 -> 2.2 PJ
+    # of output from 2022 to 2025, where IESA-Opt holds 11.5 PJ (= the whole
+    # BFG supply / the plant's 1.96 gas per unit of electricity). Two parts:
+    # (1) cap annual availability at that supply, (2) drop the plant's fuel
+    # and carbon cost from its merit-order cost (its emissions are still
+    # reported from tech_use x activity_balances elsewhere, untouched).
+    # Limitation: the whole supply is offered to the generators; other BFG
+    # consumers (CHP BFG) are not netted off.
+    for byproduct in BYPRODUCT_FUEL_ACTIVITIES:
+        if byproduct not in activities_names:
+            continue
+        iBy = activities_names.index(byproduct)
+        producers = activity_balances[:, iBy] > 0
+        supply = np.sum(tech_stock[producers] * cap2act[producers] * activity_balances[producers, iBy])
+        for iG in np.where(activity_balance_gen[:, iBy] < 0)[0]:
+            max_energy = supply / -activity_balance_gen[iG, iBy]
+            available = gen_availability_hourly[:, iG].sum()
+            if available > max_energy:
+                gen_availability_hourly[:, iG] *= max_energy / available
+            activity_balance_gen[iG, :] = 0
 
     # gen_xc_costs_hourly stays all-zero: it used to be populated here for
     # 'Inland generation' generators via an interconnector-price lookup, but
@@ -400,7 +430,7 @@ def disp_initialize_power(dimensions, activities, technologies, profiles, tech_u
 
         # Supply and demand profiles
         xc_demand[:, :] = ref_profile_matrix * techStock_interconnectors[None, :] * cap2act_interconnectors[None, :]
-        xc_supply[:, :] = -xc_demand / xc_efficiencies[:, 0][None, :]
+        xc_supply[:, :] = -xc_demand * xc_efficiencies[:, 0][None, :]
 
     xc_per_elec = xc_per_elec.astype(bool)
 

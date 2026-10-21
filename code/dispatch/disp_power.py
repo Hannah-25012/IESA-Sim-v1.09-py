@@ -56,6 +56,18 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
         tech_batteries_coord, tech_interconnectors_coord
     ) = disp_initialize_power(dimensions, activities, technologies, profiles, tech_use_hourly, iP)
 
+    # Pinned annual flows for interconnectors (use_min == use_max in the
+    # database, as a PJ total for this period) -> constant fraction of each
+    # link's nominal annual capacity (stock x cap2act); NaN = free dispatch.
+    xc_fixed_fraction = np.full(int(np.sum(tech_interconnectors_coord)), np.nan)
+    _stocks = technologies.balancers.stocks
+    if hasattr(_stocks, 'use_min') and xc_fixed_fraction.size:
+        _idx = np.where(tech_interconnectors_coord)[0]
+        _umin, _umax = _stocks.use_min[_idx, iP], _stocks.use_max[_idx, iP]
+        _nominal = (technologies.balancers.stocks.evolution[_idx, iP] * technologies.balancers.cap2acts[_idx])
+        _pinned = np.isfinite(_umin) & np.isfinite(_umax) & (_umin == _umax) & (_nominal > 0)
+        xc_fixed_fraction[_pinned] = np.clip(_umin[_pinned] / _nominal[_pinned], 0.0, 1.0)
+
     # Display header of the price table
     if nId:
         print('---Beginning of the power dispatch iterations...')
@@ -167,7 +179,8 @@ def disp_power(dimensions, parameters, activities, technologies, profiles, tech_
 
         # Dispatch interconnectors
         xc_use_hourly = disp_power_interconnectors(
-            xc_efficiencies, xc_vom, xc_per_elec, elec_prices_hourly, xc_demand, net_available_hourly
+            xc_efficiencies, xc_vom, xc_per_elec, elec_prices_hourly, xc_demand, net_available_hourly,
+            xc_fixed_fraction
         )
 
         # Adjust demand for each electricity activity

@@ -2,7 +2,7 @@
 import numpy as np
 
 def disp_power_interconnectors(xc_efficiencies, xc_vom, xc_per_elec, elec_prices_hourly,
-                                xc_demand, net_available_hourly):
+                                xc_demand, net_available_hourly, xc_fixed_fraction=None):
 
 # ========== Explanation ===============================================
 # This function allocates flows of electricity per interconnector based on
@@ -100,6 +100,12 @@ def disp_power_interconnectors(xc_efficiencies, xc_vom, xc_per_elec, elec_prices
             np.minimum(1.0, capped_draw / np.maximum(capacity, np.finfo(float).eps)),
             0.0,
         )
+
+        # A pinned annual flow (technology_stocks.use_min == use_max, e.g. the
+        # observed 2025 import/export totals) overrides the price/need logic:
+        # a constant share of nominal capacity every hour.
+        if xc_fixed_fraction is not None and np.isfinite(xc_fixed_fraction[iI]):
+            fraction = np.full_like(fraction, xc_fixed_fraction[iI], dtype=float)
 
         # Save the flows
         xc_use_hourly[:, iI] = fraction.flatten()

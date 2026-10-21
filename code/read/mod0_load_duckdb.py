@@ -20,6 +20,14 @@ def _pivot(df, row_col, row_order, col_col, col_order, value_col):
     return pivot.to_numpy()
 
 
+def _pivot_nan(df, row_col, row_order, col_col, col_order, value_col):
+    """Like _pivot, but a missing (row, col) or NULL stays NaN ("no value")
+    instead of becoming 0 - needed for optional bounds like use_min/use_max,
+    where 0 is a real, very different constraint."""
+    pivot = df.pivot(index=row_col, columns=col_col, values=value_col)
+    return pivot.reindex(index=row_order, columns=col_order).to_numpy(dtype=float)
+
+
 def _pivot_carry(df, row_col, row_order, col_col, col_order, value_col):
     """Like _pivot, but a missing (row, col) combination inherits that same
     row's nearest earlier col_order entry (falling back to the nearest later
@@ -403,6 +411,17 @@ def _load_technologies(con, periods, activities_names):
     tech_stock_dec = _pivot(stocks_df, "tech_id", tech_balancers, "period", periods, "dec_planned")
     tech_stock_min = _pivot_carry(stocks_df, "tech_id", tech_balancers, "period", periods, "min")
     tech_stock_max = _pivot_carry(stocks_df, "tech_id", tech_balancers, "period", periods, "max")
+    # Annual use floor/ceiling per period (IESA-Opt's own use_min/use_max).
+    # NaN = unconstrained. Sim currently honours it only as a FIXED annual flow
+    # for interconnector (XC Trade) technologies - see disp_power.py. Older
+    # databases without the columns simply get all-NaN.
+    try:
+        use_df = con.execute("SELECT tech_id, period, use_min, use_max FROM technology_stocks").fetchdf()
+        tech_use_min = _pivot_nan(use_df, "tech_id", tech_balancers, "period", periods, "use_min")
+        tech_use_max = _pivot_nan(use_df, "tech_id", tech_balancers, "period", periods, "use_max")
+    except duckdb.Error:
+        tech_use_min = np.full_like(tech_stock_min, np.nan, dtype=float)
+        tech_use_max = np.full_like(tech_stock_min, np.nan, dtype=float)
 
     # A merged/unified database's energy_balance table can legitimately repeat
     # the same (tech_id, activity_name) key once per period (see
@@ -473,6 +492,7 @@ def _load_technologies(con, periods, activities_names):
             deploy=tech_df["stock_deploy"].to_numpy(dtype=float),
             initial=tech_df["stock_initial"].to_numpy(dtype=float),
             dec_planned=tech_stock_dec, min=tech_stock_min, max=tech_stock_max,
+            use_min=tech_use_min, use_max=tech_use_max,
         ),
         drivers=Struct(), energies=Struct(), emissions=Struct(), use=Struct(),
         investments=Struct(), retrofittings=Struct(), decommissionings=Struct(),
