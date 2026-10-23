@@ -1,6 +1,7 @@
 # File to write the sectoral balance sheet
 import numpy as np
 import pandas as pd
+from period_balances import has_period_balances, balances_for_period
 
 def write_sector_balance(types, activities, technologies, writer):
 
@@ -39,6 +40,17 @@ def write_sector_balance(types, activities, technologies, writer):
     nS = len(sectors)
     nEL = len(energy_labels)
 
+    # Period-specific coefficients (IESA-Opt efficiency learning); None keeps the single-matrix path
+    per_period_balances = None
+    if has_period_balances(technologies):
+        per_period_balances = []
+        for iPp in range(nP):
+            ab_p = balances_for_period(technologies, iPp)
+            ab_p[:, coord_emission_act] = -ab_p[:, coord_emission_act]
+            cons_p = ab_p.copy(); cons_p[ab_p > 0] = 0
+            prod_p = ab_p.copy(); prod_p[ab_p < 0] = 0
+            per_period_balances.append((cons_p, prod_p))
+
     # Build the cell to write (a list of lists)
     rows = 2 + nS * nEL
     cols = 2 + 2 * nP
@@ -58,10 +70,18 @@ def write_sector_balance(types, activities, technologies, writer):
             act_coord = np.array([a.label == el for a in activity_entities])
 
             # Sum the consumption and production of all technologies in the sector and label
-            cons_sum = np.sum(consumption_balance[tech_coord][:, act_coord], axis=1)
-            consumption = np.sum(tech_use[tech_coord, :] * cons_sum[:, None], axis=0)
-            prod_sum = np.sum(production_balance[tech_coord][:, act_coord], axis=1)
-            production = np.sum(tech_use[tech_coord, :] * prod_sum[:, None], axis=0)
+            if per_period_balances is None:
+                cons_sum = np.sum(consumption_balance[tech_coord][:, act_coord], axis=1)
+                consumption = np.sum(tech_use[tech_coord, :] * cons_sum[:, None], axis=0)
+                prod_sum = np.sum(production_balance[tech_coord][:, act_coord], axis=1)
+                production = np.sum(tech_use[tech_coord, :] * prod_sum[:, None], axis=0)
+            else:
+                consumption = np.zeros(nP)
+                production = np.zeros(nP)
+                for iPp in range(nP):
+                    cons_p, prod_p = per_period_balances[iPp]
+                    consumption[iPp] = np.sum(tech_use[tech_coord, iPp] * np.sum(cons_p[tech_coord][:, act_coord], axis=1))
+                    production[iPp] = np.sum(tech_use[tech_coord, iPp] * np.sum(prod_p[tech_coord][:, act_coord], axis=1))
 
             # Store the data in the cell
             C[iR][0] = s

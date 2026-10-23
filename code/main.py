@@ -25,6 +25,7 @@ from mod4_postprocessing import mod4_postprocessing
 from mod5_results import mod5_results
 from mod6_save_duckdb import save_state_duckdb, save_excel_duckdb
 from datastructures import Struct
+from period_balances import apply_period_balances
 
 def main(settings):
 
@@ -180,6 +181,9 @@ def main(settings):
         # Loop through the periods
         for iP in range(n_periods):
             print(f"Now solving the period: {periods[iP]}...")
+
+            # Per-period coefficients from IESA-Opt's efficiency learning (no-op without entries)
+            apply_period_balances(technologies, iP)
 
             # Call the invest module
             print(f"-Determining investments for the period: {periods[iP]}...")

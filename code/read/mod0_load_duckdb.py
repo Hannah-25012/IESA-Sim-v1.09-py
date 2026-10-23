@@ -441,6 +441,32 @@ def _load_technologies(con, periods, activities_names):
     eb_df = eb_df.drop_duplicates(subset=["tech_id", "activity_name"])
     activity_balances = _pivot(eb_df, "tech_id", tech_balancers, "activity_name", activities_names, "value")
 
+    # IESA-Opt's own per-period efficiency learning (activity_efficiency_improvement:
+    # tech_id, activity_name, period, value) scales a coefficient to
+    # coefficient * (1 - value) in that period - see julia-backend's
+    # compute_activity_balances!. IESA-Sim's activity_balances has no period
+    # dimension, so the base matrix above stays as is and the fractions are kept
+    # as a (technology x activity x period) array; period_balances.py applies
+    # them per period (in place, at the start of each period) and for the
+    # results that aggregate across periods. None when the table is absent or
+    # empty (a native Sim database, or a merged one with no entries), in which
+    # case nothing below changes and results are bit-identical to before.
+    activity_eff_improvement = None
+    try:
+        eff_df = con.execute("SELECT tech_id, activity_name, period, value FROM activity_efficiency_improvement").fetchdf()
+    except duckdb.Error:
+        eff_df = None
+    if eff_df is not None and len(eff_df):
+        _t_idx = {t: i for i, t in enumerate(tech_balancers)}
+        _a_idx = {a: i for i, a in enumerate(activities_names)}
+        _p_idx = {int(p): i for i, p in enumerate(periods)}
+        eff = np.zeros((len(tech_balancers), len(activities_names), len(periods)))
+        for _t, _a, _p, _v in eff_df.itertuples(index=False):
+            if _t in _t_idx and _a in _a_idx and int(_p) in _p_idx and _v == _v:
+                eff[_t_idx[_t], _a_idx[_a], _p_idx[int(_p)]] = float(_v)
+        if np.any(eff != 0.0):
+            activity_eff_improvement = eff
+
     balancers = Struct(
         ids=tech_balancers,
         names=tech_df["name"].tolist(),
@@ -498,6 +524,8 @@ def _load_technologies(con, periods, activities_names):
         investments=Struct(), retrofittings=Struct(), decommissionings=Struct(),
         generators=Struct(), loops=Struct(), mca=Struct(),
         activity_balances=activity_balances,
+        activity_balances_base=None if activity_eff_improvement is None else activity_balances.copy(),
+        activity_eff_improvement=activity_eff_improvement,
     )
 
     infra_cols = ["id", "category", "name", "unit", "activity", "cap2act", "lifetime", "stock_initial"]

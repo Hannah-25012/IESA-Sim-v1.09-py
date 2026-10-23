@@ -2,6 +2,7 @@
 from results_system_costs import results_system_costs
 from results_emissions import results_emissions
 from results_policy_cashflows import results_policy_cashflows
+from period_balances import replay_per_period
 
 def results_process(dimensions, types, parameters, activities, technologies, policies, results):
     
@@ -11,10 +12,14 @@ def results_process(dimensions, types, parameters, activities, technologies, pol
 
     # Obtain emissions indicators
     print('--Obtaining emission figures...')
-    results = results_emissions(dimensions, types, activities, technologies, results)
+    results = replay_per_period(technologies, dimensions['nP'],
+                                lambda: results_emissions(dimensions, types, activities, technologies, results),
+                                results, ['emissions', 'emissions_sector_pos', 'emissions_sector_neg', 'emissions_stored'])
 
     # Obtain policy cashflows
     print('--Obtaining policy cashflows...')
-    results = results_policy_cashflows(dimensions, parameters, types, activities, technologies, policies, results)
+    results = replay_per_period(technologies, dimensions['nP'],
+                                lambda: results_policy_cashflows(dimensions, parameters, types, activities, technologies, policies, results),
+                                results, ['policy_cashflows'])
 
     return results

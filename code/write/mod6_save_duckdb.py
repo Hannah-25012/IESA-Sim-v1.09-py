@@ -17,6 +17,7 @@ import os
 import duckdb
 import numpy as np
 import pandas as pd
+from period_balances import has_period_balances, balances_for_period
 
 
 def _sql_type(dtype):
@@ -501,15 +502,35 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
     production_balance = activity_balances.copy()
     production_balance[activity_balances < 0] = 0
 
+    # Period-specific coefficients (IESA-Opt efficiency learning); None keeps the single-matrix path
+    per_period_balances = None
+    if has_period_balances(technologies):
+        per_period_balances = []
+        for iPp in range(tech_use.shape[1]):
+            ab_p = balances_for_period(technologies, iPp)
+            ab_p[:, coord_emission_act] = -ab_p[:, coord_emission_act]
+            cons_p = ab_p.copy(); cons_p[ab_p > 0] = 0
+            prod_p = ab_p.copy(); prod_p[ab_p < 0] = 0
+            per_period_balances.append((cons_p, prod_p))
+
     rows = []
     for s in sectors:
         for el in energy_labels:
             tech_coord = np.logical_and(coord_categories, tech_sector == s)
             act_coord = np.array([a.label == el for a in activity_entities])
-            cons_sum = np.sum(consumption_balance[tech_coord][:, act_coord], axis=1)
-            consumption = np.sum(tech_use[tech_coord, :] * cons_sum[:, None], axis=0)
-            prod_sum = np.sum(production_balance[tech_coord][:, act_coord], axis=1)
-            production = np.sum(tech_use[tech_coord, :] * prod_sum[:, None], axis=0)
+            if per_period_balances is None:
+                cons_sum = np.sum(consumption_balance[tech_coord][:, act_coord], axis=1)
+                consumption = np.sum(tech_use[tech_coord, :] * cons_sum[:, None], axis=0)
+                prod_sum = np.sum(production_balance[tech_coord][:, act_coord], axis=1)
+                production = np.sum(tech_use[tech_coord, :] * prod_sum[:, None], axis=0)
+            else:
+                nPp = tech_use.shape[1]
+                consumption = np.zeros(nPp)
+                production = np.zeros(nPp)
+                for iPp in range(nPp):
+                    cons_p, prod_p = per_period_balances[iPp]
+                    consumption[iPp] = np.sum(tech_use[tech_coord, iPp] * np.sum(cons_p[tech_coord][:, act_coord], axis=1))
+                    production[iPp] = np.sum(tech_use[tech_coord, iPp] * np.sum(prod_p[tech_coord][:, act_coord], axis=1))
             for iP, period in enumerate(periods):
                 rows.append((s, el, period, consumption[iP], production[iP]))
     sector_balance_df = pd.DataFrame(rows, columns=["sector", "energy_label", "period", "consumption", "production"])
