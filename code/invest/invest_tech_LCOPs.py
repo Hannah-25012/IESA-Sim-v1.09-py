@@ -103,7 +103,10 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
 
         # Adjust investments with subsidies
         if tech.subsidy_subject and own_act is not None and own_act.name in subsidy_idx_by_name:
-            subsidy_effect = 1 + subsidy_values[subsidy_idx_by_name[own_act.name], iP] / 100
+            # The Policies sheet gives 'Overnight investment subsidy' as a positive % (50 = half the overnight cost is paid
+            # by the government, and results_policy_cashflows pays it out as +value/100 of the depreciated investment),
+            # so the investor's cost is multiplied by (1 - value/100). It used to be (1 + value/100): a 50% MARKUP.
+            subsidy_effect = 1 - subsidy_values[subsidy_idx_by_name[own_act.name], iP] / 100
             inv_adjusted *= subsidy_effect
 
         # Adjust voms with feed-in subsidies and taxes
@@ -112,12 +115,10 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
         # Adjust for feed-in subsidies
         if tech.feedin_subject:
 
-            # First modify the main activity
-            if own_act is not None and own_act.name in feedin_idx_by_name:
-                feedin_effect = feedin_values[feedin_idx_by_name[own_act.name], iP]
-                vom_adjusted -= feedin_effect
-
-            # Then adjust other activities
+            # Every activity the technology PRODUCES (balance > 0), the main one included, earns the feed-in once,
+            # scaled by its balance coefficient - exactly what results_policy_cashflows pays out. The main activity
+            # used to be subtracted a second time here before this loop (unscaled), so e.g. an electrolyser
+            # (hydrogen balance +1) was ranked on 2x its feed-in while the cashflow report counted it once.
             activity_balance_coord = np.where(technology_balance > 0)[0]
             for iA_cogen in activity_balance_coord:
                 cogen_activity = activities.entities[iA_cogen]

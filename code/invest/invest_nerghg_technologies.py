@@ -2,6 +2,10 @@
 import numpy as np
 from invest_nerghg_sufficiency import invest_nerghg_sufficiency
 
+# 2022 and 2025 are already history: the non-CO2 drivers are calibrated to CBS (see the merge's HISTORICAL_ACTIVITY_VOLUMES),
+# so building abatement on top pulled agriculture 2 Mt (2025) below CBS. Abatement is only invested in from this year on.
+NERGHG_FIRST_INVESTMENT_YEAR = 2030
+
 def invest_nerghg_technologies(dimensions, activities, technologies,
                                 techstock_exist, investment_potential, tech_choices, iP, frozen_mix=False):
 
@@ -15,6 +19,9 @@ def invest_nerghg_technologies(dimensions, activities, technologies,
     # Initialize investments
     investments = np.zeros((nTb,1))
 
+    if activities.periods[iP] < NERGHG_FIRST_INVESTMENT_YEAR:
+        return techstock_exist + investments, investments
+
     # Determine the energy gap for current stock
     emission_gap = invest_nerghg_sufficiency(
         dimensions, activities, technologies, techstock_exist, True, iP
@@ -25,7 +32,13 @@ def invest_nerghg_technologies(dimensions, activities, technologies,
 
         # Check if the activity has an emission gap to fill
         if emission_gap[activity.idx] > 0:
-            tech_coord = np.array([t.idx for t in activity.technologies if t.sector == 'nER GHG'], dtype=int)
+            # Non-CO2 abatement candidates. IESA-Sim's own database puts them in the sector 'nER GHG'; the unified
+            # (merged) database re-classifies them under the sector they abate (Agriculture, Industry, ...), so the
+            # sector test found nothing and no abatement was ever built. They are recognised by what they are -
+            # category 'Emission' with the non-CO2 emission activity as their main activity - not by a sector name.
+            nerghg_activity = activity.name.startswith(('Emitted neGHG', 'nER-GHG'))
+            tech_coord = np.array([t.idx for t in activity.technologies
+                                   if t.sector == 'nER GHG' or (nerghg_activity and t.category == 'Emission')], dtype=int)
             nT = len(tech_coord)
 
             # Check if there are nER-GHG technologies to invest in
