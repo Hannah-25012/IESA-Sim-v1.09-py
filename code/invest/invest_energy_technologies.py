@@ -34,6 +34,14 @@ def _unfed_converters(activities, technologies, techstock_max):
     for t in np.where(converter)[0]:
         if not genuine[np.where(neg[t])[0][0]]:
             unfed[t] = True
+    # Technologies that name an energy activity as their main one but do not actually PRODUCE it (balance <= 0): storage
+    # buffers (their main activity is the stored commodity, with no activity balance at all) and exports. Counted as
+    # supply by the cost-rank fill, a buffer 'closes' the gap on paper - rank 2-3 for Hydrogen HD - while no hydrogen
+    # appears, so the real producers (electrolysers) behind it in the ranking were never reached.
+    for t in range(nT):
+        main = technologies.balancers.entities[t].activity
+        if main is not None and main.is_energy and not main.is_electricity and bal[t, main.idx] <= 1e-12:
+            unfed[t] = True
     return unfed
 
 
