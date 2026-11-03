@@ -1,7 +1,41 @@
 # File to invest in energy technologies
+import re
 import numpy as np
 from invest_energy_sufficiency import invest_energy_sufficiency
 from invest_investment_potential import DEFAULT_STOCK_DEPLOY_FRACTION
+
+def _unfed_converters(activities, technologies, techstock_max):
+    """Boolean mask over technologies: 1:1 converters between two energy activities (e.g. the Hydrogen HD <-> LD
+    compressors, one energy activity consumed, one produced) whose INPUT activity has no genuine producer - no
+    non-converter technology that produces it and can exist (stock max > 0).
+
+    Why: in the merged database Hydrogen is split into HD and LD with a compressor in each direction. Filling an
+    HD gap by investing in the LD->HD compressor, then the LD gap by the HD->LD compressor, chases itself in a
+    circle: each investment closes one gap on paper (capacity-based sufficiency) and opens the other, no hydrogen
+    is ever produced, and the real producers (electrolysers) were never built. A converter is only a real source
+    when something real feeds its input, so those without are not candidates for gap-filling investment."""
+    bal = technologies.balancers.activity_balances
+    energy = np.array([a.is_energy and not a.is_electricity for a in activities.entities])
+    nT = bal.shape[0]
+    pos = (bal > 1e-12) & energy[None, :]
+    neg = (bal < -1e-12) & energy[None, :]
+    # Same-commodity converters only: the produced and the consumed activity differ just in their pressure/form suffix
+    # (Hydrogen HD <-> Hydrogen LD, Natural Gas LD/HD/LNG). A fuel->product plant (boiler, biomass converter, ...) is NOT one.
+    base = np.array([re.sub(r'\s+(HD|LD|LNG)$', '', a.name) for a in activities.entities])
+    converter = np.zeros(nT, dtype=bool)
+    for t in np.where((pos.sum(axis=1) == 1) & (neg.sum(axis=1) == 1))[0]:
+        converter[t] = base[np.where(pos[t])[0][0]] == base[np.where(neg[t])[0][0]]
+    genuine = np.zeros(bal.shape[1], dtype=bool)
+    can_exist = np.asarray(techstock_max).flatten() > 0
+    for t in range(nT):
+        if not converter[t] and can_exist[t]:
+            genuine |= pos[t]
+    unfed = np.zeros(nT, dtype=bool)
+    for t in np.where(converter)[0]:
+        if not genuine[np.where(neg[t])[0][0]]:
+            unfed[t] = True
+    return unfed
+
 
 def invest_energy_technologies(dimensions, activities, technologies, techstock_exist,
                                 investment_potential, tech_choices, iP, frozen_mix=False):
@@ -24,6 +58,13 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
                              DEFAULT_STOCK_DEPLOY_FRACTION * techstock_max)
     tech_choices_lcop_order = technologies.balancers.choices_lcop_order[:, iP]
     activity_balances = technologies.balancers.activity_balances
+    unfed_converter = _unfed_converters(activities, technologies, techstock_max)
+    # Not removed from the candidate lists below (the LCOP-rank fill indexes candidates by their rank within the full
+    # list, so a hole would break it) but given no room: zero potential and no stock ceiling.
+    investment_potential = np.array(investment_potential, dtype=float, copy=True)
+    investment_potential[unfed_converter] = 0.0
+    techstock_max = np.array(techstock_max, dtype=float, copy=True)
+    techstock_max[unfed_converter] = 0.0
 
     # Calculate the shedding adjustment
     coord_shedding_tech = shedding_guarantee > 0
@@ -278,7 +319,7 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
             # fix also removes below) every subsequent period, ratcheting
             # that one technology's own stock/dispatched use into the
             # thousands with no physical production ever behind it.
-            tech_coord_all = np.array([t.idx for t in activity.technologies], dtype=int)
+            tech_coord_all = np.array([t.idx for t in activity.technologies if not unfed_converter[t.idx]], dtype=int)
             tech_coord = tech_coord_all[activity_balances[tech_coord_all, activity.idx] > 0]
 
             # An activity can have an energy gap but no producing technology
@@ -322,8 +363,13 @@ def invest_energy_technologies(dimensions, activities, technologies, techstock_e
             else:
                 # Preferences of thoses technologies
                 options_preferences = tech_preference[tech_coord]
-                max_value = np.max(options_preferences)
-                options_sel = np.where(options_preferences == max_value)[0][0]
+                if np.all(np.isnan(options_preferences)):
+                    print(f"--****No candidate has a defined preference for activity: {activity.name} "
+                          f"({[technologies.balancers.entities[i].id for i in tech_coord]}) - taking the first")
+                    options_sel = 0
+                else:
+                    max_value = np.nanmax(options_preferences)
+                    options_sel = np.where(options_preferences == max_value)[0][0]
 
                 # Identify which technology was chosen
                 choice_coord = tech_coord[options_sel]
