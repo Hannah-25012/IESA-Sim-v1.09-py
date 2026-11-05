@@ -1,5 +1,6 @@
 # File to determine the LCOPs of technologies
 import numpy as np
+from period_balances import balances_for_period, has_period_balances
 
 def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_potential, retrofit_cost, iP,
                        foresight_reference=None):
@@ -42,6 +43,13 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
         max_period_idx = foresight_reference.energy_prices.shape[1] - 1
         future_idxs_all = [t for t in range(iP + 1, len(periods))
                             if t <= max_period_idx]
+        # IESA-Opt-style efficiency learning (period_balances.py): the coefficient
+        # matrix of each FUTURE period, so the lookahead below prices a technology's
+        # own future fuel use and emissions with that period's improved coefficients
+        # instead of today's. None when the database has no efficiency entries - the
+        # lookahead then uses today's coefficients exactly as before.
+        future_balances = ({t: balances_for_period(technologies, t) for t in future_idxs_all}
+                           if has_period_balances(technologies) else None)
     inv_cost = technologies.balancers.costs.investments[:, iP]
     fom_cost = technologies.balancers.costs.foms[:, iP]
     vom_cost = technologies.balancers.costs.voms[:, iP]
@@ -185,10 +193,21 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
             weight_total = weight_now
             for t in future_idxs:
                 w = (1 + discount_rate[iTb]) ** -(periods[t] - periods[iP])
+                if future_balances is None:
+                    fuel_consumption_t = fuel_consumption
+                    emission_balance_t = technology_balance[iAc]
+                else:
+                    # Same derivation as today's fuel_consumption / technology_balance,
+                    # from period t's coefficients. cogen_share stays today's value.
+                    balance_t = future_balances[t][iTb].copy()
+                    if own_act is not None:
+                        balance_t[own_act.idx] = 0
+                    fuel_consumption_t = np.maximum(-balance_t[iAe], 0)
+                    emission_balance_t = balance_t[iAc]
                 future_fuels = (cogen_share * np.sum(
-                    fuel_consumption * foresight_reference.energy_prices[:, t])).item()
+                    fuel_consumption_t * foresight_reference.energy_prices[:, t])).item()
                 future_emissions = (cogen_share * np.sum(
-                    technology_balance[iAc] * foresight_reference.emission_prices[:, t])).item()
+                    emission_balance_t * foresight_reference.emission_prices[:, t])).item()
                 weighted_fuels += w * future_fuels
                 weighted_emissions += w * future_emissions
                 weight_total += w
