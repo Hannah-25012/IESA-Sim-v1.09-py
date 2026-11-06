@@ -195,6 +195,7 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
             weight_now = 1.0
             weighted_fuels = fuels_now
             weighted_emissions = emissions_now
+            weighted_feedin = feedin_now
             weight_total = weight_now
             for t in future_idxs:
                 w = (1 + discount_rate[iTb]) ** -(periods[t] - periods[iP])
@@ -213,11 +214,20 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
                     fuel_consumption_t * foresight_reference.energy_prices[:, t])).item()
                 future_emissions = (cogen_share * np.sum(
                     emission_balance_t * foresight_reference.emission_prices[:, t])).item()
+                # The feed-in schedule of period t on what the technology produces in period t
+                # (e.g. the hydrogen feed-in falling 30 -> 0 M EUR/PJ between 2025 and 2050).
+                if feedin_terms:
+                    balances_t = tech.activity_balances if future_balances is None else future_balances[t][iTb]
+                    weighted_feedin += w * sum(feedin_values[row, t] * balances_t[iA] for row, iA in feedin_terms)
                 weighted_fuels += w * future_fuels
                 weighted_emissions += w * future_emissions
                 weight_total += w
             fuels = weighted_fuels / weight_total
             emissions = weighted_emissions / weight_total
+            # vom above already carries today's feed-in; swap it for the discount-weighted average
+            # over the same lifetime window the fuel and emission terms use.
+            if feedin_terms:
+                vom += cogen_share * (feedin_now - weighted_feedin / weight_total)
         else:
             fuels = fuels_now
             emissions = emissions_now
