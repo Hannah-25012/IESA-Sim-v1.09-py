@@ -121,18 +121,23 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
         vom_adjusted = vom_cost[iTb]
 
         # Adjust for feed-in subsidies
+        # Every activity the technology PRODUCES (balance > 0), the main one included, earns the feed-in once,
+        # scaled by its balance coefficient - exactly what results_policy_cashflows pays out.
+        # NOTE: this reads tech.activity_balances, NOT technology_balance. technology_balance has the main
+        # activity zeroed (it is the 'own activity' excluded from the fuel/emission terms), so looping over it
+        # silently dropped the main activity's feed-in altogether: an electrolyser's hydrogen feed-in, a
+        # synthetic-fuel plant's fuel feed-in, a generator's electricity feed-in never reached its LCOP.
+        # (The earlier "subtracted twice" diagnosis was wrong - the zeroed main activity could not be in the loop.)
+        feedin_terms = []   # (row in the feed-in table, activity index) per produced, feed-in-eligible activity
+        feedin_now = 0.0
         if tech.feedin_subject:
-
-            # Every activity the technology PRODUCES (balance > 0), the main one included, earns the feed-in once,
-            # scaled by its balance coefficient - exactly what results_policy_cashflows pays out. The main activity
-            # used to be subtracted a second time here before this loop (unscaled), so e.g. an electrolyser
-            # (hydrogen balance +1) was ranked on 2x its feed-in while the cashflow report counted it once.
-            activity_balance_coord = np.where(technology_balance > 0)[0]
-            for iA_cogen in activity_balance_coord:
-                cogen_activity = activities.entities[iA_cogen]
-                if cogen_activity.name in feedin_idx_by_name:
-                    feedin_effect = feedin_values[feedin_idx_by_name[cogen_activity.name], iP] * technology_balance[iA_cogen]
-                    vom_adjusted -= feedin_effect
+            for iA_prod in np.where(tech.activity_balances > 0)[0]:
+                prod_name = activities.entities[iA_prod].name
+                if prod_name in feedin_idx_by_name:
+                    feedin_row = feedin_idx_by_name[prod_name]
+                    feedin_terms.append((feedin_row, iA_prod))
+                    feedin_now += feedin_values[feedin_row, iP] * tech.activity_balances[iA_prod]
+            vom_adjusted -= feedin_now
 
         # Adjust for taxes (emissions only)
         # Identify activities being used. Emission-type balances are stored
