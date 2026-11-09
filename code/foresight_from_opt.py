@@ -37,8 +37,28 @@ EMISSION_CAP_TO_ACTIVITIES = {
 }
 
 
+def _hourly_price_summary(prices_by_index, weight_by_index, price_ranges_hours, n_hours=8760):
+    """One (activity, period): per-index prices (already per unit of energy, weights removed) and the number
+    of hours each index stands for -> (weighted yearly mean, ranges[nRp]) where ranges[r] is the mean price
+    of the cheapest price_ranges_hours[r] hours - the same definition post_prices.py uses for Sim's own
+    energy_prices_ranges, here on a weighted (representative-day) price-duration curve."""
+    p = np.asarray(prices_by_index, dtype=float)
+    w = np.asarray(weight_by_index, dtype=float)
+    w = w * (n_hours / w.sum())          # hours per index, summing to a full year
+    order = np.argsort(p, kind="stable")
+    p, w = p[order], w[order]
+    cum = np.cumsum(w)
+    mean = float(np.sum(p * w) / n_hours)
+    ranges = np.empty(len(price_ranges_hours), dtype=float)
+    for r, n_h in enumerate(price_ranges_hours):
+        n_h = float(min(max(n_h, 1), n_hours))
+        take = np.clip(n_h - (cum - w), 0.0, w)      # hours taken from each index, cheapest first
+        ranges[r] = float(np.sum(p * take) / take.sum())
+    return mean, ranges
+
+
 def load_opt_price_reference(opt_results_db, periods, energy_names, emission_names,
-                              fallback_energy, fallback_emission):
+                              fallback_energy, fallback_emission, price_ranges_hours=None):
     """Build (reference, report). `reference` is a Struct ready to pass as
     main.py's foresight_reference. `report` is a plain dict of coverage
     counts - how much of the reference is actually Opt-sourced vs held flat
@@ -76,6 +96,9 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
     emission_idx = {name: i for i, name in enumerate(emission_names)}
 
     conflicts = set()
+    # [nRp, nAe, nP], NaN where the source gave no hourly prices (the LCOP then uses the plain yearly price)
+    energy_price_ranges = (np.full((len(price_ranges_hours), nAe, nP), np.nan)
+                           if price_ranges_hours is not None else None)
     energy_matched_names = set()
     energy_matched_cells = 0
     emission_matched_names = set()
@@ -120,6 +143,50 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
             energy_matched_names.add(activity)
             energy_matched_cells += 1
 
+        # --- hourly activities (electricity, heat network). Opt prices them per hour (activity_prices_hourly),
+        # not per year: the annual activity_prices row for such an activity is 0 in every period, which used
+        # to reach the reference as "electricity is free". The hourly rows are the raw duals of the
+        # representative-hour balances, which carry the weight of the days each representative day stands
+        # for (cluster_map), so each is divided by that weight to get a price per unit of energy. Rows are only
+        # written when |dual| > 1e-6, so missing indices are zero-priced hours. ---------------------------
+        hourly_activities_covered = set()
+        if "activity_prices_hourly" in tables:
+            hours_per_day, n_rep_days = 24, None
+            if "timing_summary" in tables:
+                ts_row = con.execute("select hoursPer_day, n_repDays from timing_summary limit 1").fetchone()
+                if ts_row and ts_row[0]:
+                    hours_per_day = int(ts_row[0])
+                    n_rep_days = int(ts_row[1]) if ts_row[1] else None
+            days_per_rep = {}
+            if "cluster_map" in tables:
+                for _day, rep in con.execute("select calendar_day, rep_day from cluster_map").fetchall():
+                    days_per_rep[int(rep)] = days_per_rep.get(int(rep), 0) + 1
+            hourly = {}
+            for activity, period, mode, idx, price in con.execute(
+                    "select activity, period, mode, time_index, price from activity_prices_hourly").fetchall():
+                if activity in energy_idx and period in period_idx:
+                    hourly.setdefault((activity, period, mode), {})[int(idx)] = float(price)
+            for (activity, period, mode), by_idx in hourly.items():
+                if mode == "ts":
+                    n_idx = (n_rep_days or max(days_per_rep, default=0)) * hours_per_day
+                    weight = np.array([days_per_rep.get((i - 1) // hours_per_day + 1, 1) for i in range(1, n_idx + 1)],
+                                      dtype=float)
+                else:
+                    n_idx = max(by_idx)
+                    weight = np.ones(n_idx)
+                raw = np.zeros(n_idx)
+                for i, v in by_idx.items():
+                    if 1 <= i <= n_idx:
+                        raw[i - 1] = v
+                per_unit = raw / weight if mode == "ts" else raw
+                mean, rng = _hourly_price_summary(per_unit, weight, price_ranges_hours
+                                                  if price_ranges_hours is not None else [1], 8760)
+                iAe, iP = energy_idx[activity], period_idx[period]
+                energy_prices[iAe, iP] = mean
+                if energy_price_ranges is not None:
+                    energy_price_ranges[:, iAe, iP] = rng
+                hourly_activities_covered.add(activity)
+
         # --- emission prices: fan the 3 aggregate caps out onto every Sim
         # activity that cap covers. Prefer node='NL' when present (this is a
         # single-node NL model in practice), else average across nodes. -----
@@ -162,6 +229,8 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
         "emission_activities_total": nAc,
         "emission_activities_opt_covered": len(emission_matched_names),
         "emission_cells_opt_covered": emission_matched_cells,
+        "hourly_energy_activities_from_opt": sorted(hourly_activities_covered),
     }
-    reference = Struct(energy_prices=energy_prices, emission_prices=emission_prices)
+    reference = Struct(energy_prices=energy_prices, emission_prices=emission_prices,
+                       energy_price_ranges=energy_price_ranges)
     return reference, report
