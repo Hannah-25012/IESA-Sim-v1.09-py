@@ -57,6 +57,24 @@ def _hourly_price_summary(prices_by_index, weight_by_index, price_ranges_hours, 
     return mean, ranges
 
 
+def _opt_discount_factors(con, tables):
+    """{period: social discount factor Opt applied}, read from the Opt results themselves.
+
+    Opt's objective multiplies every period's costs by sdf(p) = (1 + r)^(base_year - p) (julia-backend
+    parameters.jl), so every shadow price it exports (annual balances, hourly balances, emission caps) is
+    a price discounted to the base year. cost_breakdown carries both the discounted cost and its nominal
+    value (writers.jl divides by the same sdf), so their ratio per period is exactly the factor this run
+    used. Empty when the table or column is missing (runs from before cost_MEUR_nominal existed)."""
+    if "cost_breakdown" not in tables:
+        return {}
+    cols = {r[0] for r in con.execute("describe cost_breakdown").fetchall()}
+    if "cost_MEUR_nominal" not in cols:
+        return {}
+    return {int(period): float(factor) for period, factor in con.execute(
+        "select period, median(cost_MEUR / cost_MEUR_nominal) from cost_breakdown "
+        "where cost_MEUR_nominal <> 0 group by period").fetchall() if factor and factor > 0}
+
+
 def load_opt_price_reference(opt_results_db, periods, energy_names, emission_names,
                               fallback_energy, fallback_emission, price_ranges_hours=None):
     """Build (reference, report). `reference` is a Struct ready to pass as
@@ -107,6 +125,16 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
     con = duckdb.connect(opt_results_db, read_only=True)
     try:
         tables = {r[0] for r in con.execute("show tables").fetchall()}
+
+        # Opt's prices are discounted to the base year; Sim's own prices are the period's own money, and
+        # the lookahead applies its own discounting (the agent profile's rate) when it averages periods.
+        # Undo Opt's discounting here so a future price means the same thing whatever its source, instead
+        # of discounting Opt's prices twice.
+        discount = _opt_discount_factors(con, tables)
+
+        def nominal(value, period):
+            d = discount.get(int(period))
+            return value / d if d else value
         if "activity_prices" not in tables:
             raise ValueError(
                 f"{opt_results_db} has no activity_prices table - was this "
@@ -139,7 +167,7 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
             iP = period_idx.get(period)
             if iAe is None or iP is None:
                 continue
-            energy_prices[iAe, iP] = price
+            energy_prices[iAe, iP] = nominal(price, period)
             energy_matched_names.add(activity)
             energy_matched_cells += 1
 
@@ -182,9 +210,9 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
                 mean, rng = _hourly_price_summary(per_unit, weight, price_ranges_hours
                                                   if price_ranges_hours is not None else [1], 8760)
                 iAe, iP = energy_idx[activity], period_idx[period]
-                energy_prices[iAe, iP] = mean
+                energy_prices[iAe, iP] = nominal(mean, period)
                 if energy_price_ranges is not None:
-                    energy_price_ranges[:, iAe, iP] = rng
+                    energy_price_ranges[:, iAe, iP] = nominal(rng, period)
                 hourly_activities_covered.add(activity)
 
         # --- emission prices: fan the 3 aggregate caps out onto every Sim
@@ -213,7 +241,7 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
                         price = cap_price.get((cap_name, period))
                         if price is None:
                             continue
-                        emission_prices[iAc, period_idx[period]] = price
+                        emission_prices[iAc, period_idx[period]] = nominal(price, period)
                         emission_matched_cells += 1
                         covered_any = True
                     if covered_any:
@@ -230,6 +258,7 @@ def load_opt_price_reference(opt_results_db, periods, energy_names, emission_nam
         "emission_activities_opt_covered": len(emission_matched_names),
         "emission_cells_opt_covered": emission_matched_cells,
         "hourly_energy_activities_from_opt": sorted(hourly_activities_covered),
+        "opt_discount_factors_undone": {p_: round(d_, 4) for p_, d_ in sorted(discount.items())} or None,
     }
     reference = Struct(energy_prices=energy_prices, emission_prices=emission_prices,
                        energy_price_ranges=energy_price_ranges)
