@@ -166,6 +166,7 @@ def main(settings):
                 activities.emissions.names,
                 activities.energies.prices.initialized,
                 activities.emissions.prices.initialized,
+                price_ranges_hours=activities.energies.prices.price_ranges_hours,
             )
             print(f"Opt-fed foresight coverage: {opt_coverage}")
 
@@ -235,6 +236,9 @@ def main(settings):
             reference = Struct(
                 energy_prices=activities.energies.prices.yearly.copy(),
                 emission_prices=activities.emissions.prices.yearly.copy(),
+                # each period's hourly price ranges too, so a shedding / demand-response technology's
+                # future electricity cost is its cheap-hours price, as it is for today's period
+                energy_price_ranges=activities.energies.prices.ranges.copy(),
             )
 
     # Generate the results

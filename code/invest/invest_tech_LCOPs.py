@@ -83,9 +83,14 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
             technology_balance[own_act.idx] = 0
         energy_balance = technology_balance[iAe]
 
-        # Modify the energy price vector for shedding and flexible technologies
-        used_energy_prices = energy_prices.copy()
-        if ((tech.shedding_guarantee > 0) or (tech.flexibility_form == 'DR shifting')) and (iP > 0):
+        # Modify the energy price vector for shedding and flexible technologies.
+        # flex_adjusted() swaps the electricity price a shedding / demand-response technology pays for the
+        # price of its cheap hours: the average of the cheapest `shedding_guarantee` share of hours (shedding)
+        # or a blend of the yearly average and that cheap-hours price (DR shifting). It is a function so the
+        # foresight lookahead below can apply the SAME adjustment to each future period's own prices and
+        # price ranges, instead of mixing a cheap-hours price for today with plain averages for the future.
+        flex_tech = ((tech.shedding_guarantee > 0) or (tech.flexibility_form == 'DR shifting')) and (iP > 0)
+        if flex_tech:
 
             # Find which energy activity is also an electricity activity being used
             iAe_modify = np.array([
@@ -93,16 +98,25 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
                 for i, act in enumerate(energy_activities)
             ])
 
-            # Modify energy prices based on flexibility and price ranges
-            if tech.shedding_guarantee > 0:
-                price_rge = np.searchsorted(price_ranges, tech.shedding_guarantee, side='left')
-                used_energy_prices[iAe_modify] = energy_prices_ranges[price_rge, iAe_modify]
-            elif tech.flexibility_form == 'DR shifting':
-                price_rge = np.searchsorted(price_ranges, tech.flexibility_nonnegotiable, side='left')
-                used_energy_prices[iAe_modify] = (
-                    energy_prices[iAe_modify] * tech.flexibility_nonnegotiable +
-                    energy_prices_ranges[price_rge, iAe_modify] * (1 - tech.flexibility_nonnegotiable)
-                )
+            def flex_adjusted(prices, ranges, _tech=tech, _mod=iAe_modify):
+                out = prices.copy()
+                if _tech.shedding_guarantee > 0:
+                    rge = np.searchsorted(price_ranges, _tech.shedding_guarantee, side='left')
+                    cheap = ranges[rge, _mod]
+                    # a range that is not available (NaN: the price source gave no hourly prices for that
+                    # activity) falls back to the plain price
+                    out[_mod] = np.where(np.isfinite(cheap), cheap, prices[_mod])
+                elif _tech.flexibility_form == 'DR shifting':
+                    rge = np.searchsorted(price_ranges, _tech.flexibility_nonnegotiable, side='left')
+                    cheap = ranges[rge, _mod]
+                    cheap = np.where(np.isfinite(cheap), cheap, prices[_mod])
+                    out[_mod] = (prices[_mod] * _tech.flexibility_nonnegotiable +
+                                 cheap * (1 - _tech.flexibility_nonnegotiable))
+                return out
+
+            used_energy_prices = flex_adjusted(energy_prices, energy_prices_ranges)
+        else:
+            used_energy_prices = energy_prices.copy()
 
         # Adjust investments with retrofitting
         inv_adjusted = inv_cost[iTb]
@@ -196,6 +210,9 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
             weighted_fuels = fuels_now
             weighted_emissions = emissions_now
             weighted_feedin = feedin_now
+            # Hourly price ranges of each future period (None when the price source has none: then a
+            # flexible technology's future electricity is priced at the plain yearly price).
+            ref_ranges = getattr(foresight_reference, 'energy_price_ranges', None)
             weight_total = weight_now
             for t in future_idxs:
                 w = (1 + discount_rate[iTb]) ** -(periods[t] - periods[iP])
@@ -210,8 +227,10 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
                         balance_t[own_act.idx] = 0
                     fuel_consumption_t = np.maximum(-balance_t[iAe], 0)
                     emission_balance_t = balance_t[iAc]
-                future_fuels = (cogen_share * np.sum(
-                    fuel_consumption_t * foresight_reference.energy_prices[:, t])).item()
+                price_t = foresight_reference.energy_prices[:, t]
+                if flex_tech and ref_ranges is not None:
+                    price_t = flex_adjusted(price_t, ref_ranges[:, :, t])
+                future_fuels = (cogen_share * np.sum(fuel_consumption_t * price_t)).item()
                 future_emissions = (cogen_share * np.sum(
                     emission_balance_t * foresight_reference.emission_prices[:, t])).item()
                 # The feed-in schedule of period t on what the technology produces in period t
