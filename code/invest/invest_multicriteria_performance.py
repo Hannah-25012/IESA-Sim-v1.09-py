@@ -1,7 +1,17 @@
 # File to determine the multi-criteria performance of technologies
 import numpy as np
+from period_balances import balances_for_period, has_period_balances
 
-def invest_multicriteria_performance(dimensions, activities, technologies, agents, iP):
+def invest_multicriteria_performance(dimensions, activities, technologies, agents, iP,
+                                      foresight_reference=None):
+    """foresight_reference (optional, same object invest_tech_LCOPs.py receives): when given, the emissions
+    performance criterion looks ahead the way the LCOP's fuels and emissions terms do. Each technology's
+    emission factor (its emission balances, own activity excluded) becomes the discount-weighted average of
+    the factor in this period and in every later period inside its remaining lifetime, using that period's
+    own coefficient matrix (IESA-Opt-style efficiency learning, period_balances.py). Weights: 1 for this
+    period, (1 + r)^-(years ahead) for later ones, r the technology's own discount rate - identical to the
+    LCOP. Only technologies whose coefficients change over time are affected; without efficiency-learning
+    entries, or without foresight, the criterion is exactly the single-period one."""
 
     # Extract parameters
     nTb = dimensions['nTb']
@@ -10,6 +20,15 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
     tech_LCOPs = technologies.balancers.lcops.values[:, iP]
     multicriteria_performance_tech = technologies.balancers.mca.matrix[:, :, iP]
     multicriteria_categories = agents.criteria.categories
+
+    # Future periods the emission factor may look at (same window rule as invest_tech_LCOPs.py)
+    future_balances = None
+    if foresight_reference is not None and has_period_balances(technologies):
+        periods = activities.periods
+        max_period_idx = foresight_reference.energy_prices.shape[1] - 1
+        future_idxs_all = [t for t in range(iP + 1, len(periods)) if t <= max_period_idx]
+        future_balances = {t: balances_for_period(technologies, t) for t in future_idxs_all}
+        discount_rate = technologies.balancers.costs.discount_rate
 
     # Identify multi-criteria coordinates
     iMC1 = multicriteria_categories.index('Social Attitude')
@@ -30,6 +49,21 @@ def invest_multicriteria_performance(dimensions, activities, technologies, agent
         # positive-for-emitters (IESA-Opt convention), so the raw sum already
         # is "emitted amount", exactly as the negated sum used to be.
         emissions[tech.idx] = np.sum(technology_balance[emission_idx])
+
+        # Foresight: discount-weighted average of the emission factor over the remaining lifetime
+        if future_balances:
+            weighted_emissions = emissions[tech.idx]
+            weight_total = 1.0
+            for t in future_balances:
+                if periods[t] > periods[iP] + tech.lifetime:
+                    continue
+                w = (1 + discount_rate[tech.idx]) ** -(periods[t] - periods[iP])
+                balance_t = future_balances[t][tech.idx].copy()
+                if tech.activity is not None:
+                    balance_t[tech.activity.idx] = 0
+                weighted_emissions += w * np.sum(balance_t[emission_idx])
+                weight_total += w
+            emissions[tech.idx] = weighted_emissions / weight_total
 
         # Retrieve social perception parameter
         if tech.social_perception == 'Negative':

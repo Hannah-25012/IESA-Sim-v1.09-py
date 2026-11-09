@@ -58,7 +58,8 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
     # === Call the multi criteria performance function ===
     print("--Measuring multi criteria performance...")
     technologies = invest_multicriteria_performance(
-        dimensions, activities, technologies, agents, iP
+        dimensions, activities, technologies, agents, iP,
+        foresight_reference=foresight_reference
     )
 
     # === Call the technology choices function ===
