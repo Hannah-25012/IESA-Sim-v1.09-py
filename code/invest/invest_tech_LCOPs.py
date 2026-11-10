@@ -15,6 +15,8 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
     'foresight-aware fuels/emissions' block below for why only those two
     terms change (investment/fom/vom are already period-specific exogenous
     input data, not something "foresight" can improve on)."""
+    # UPDATE: the lookahead now also covers FOM, the VOM base and the emission tax inside VOM (recurring
+    # costs whose future-period entries exist). Investment alone stays at the construction-period value.
 
     # Extract parameters
     nTb = dimensions['nTb']
@@ -53,6 +55,8 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
     inv_cost = technologies.balancers.costs.investments[:, iP]
     fom_cost = technologies.balancers.costs.foms[:, iP]
     vom_cost = technologies.balancers.costs.voms[:, iP]
+    foms_all = technologies.balancers.costs.foms     # [technology, period]: the foresight lookahead reads future columns
+    voms_all = technologies.balancers.costs.voms
     subsidy_activities = policies.subsidies.activities
     subsidy_values = np.array(policies.subsidies.values)
     feedin_activities = policies.feedins.activities
@@ -160,11 +164,16 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
         # the mirror image of the pre-flip `< 0` selector + unsigned product,
         # chosen so taxes_effect (and thus vom_adjusted) is unchanged.
         activity_balance_coord = np.where((technology_balance > 0) & iAc)[0]
+        tax_terms = []   # (row in the tax table, activity index) per taxed emission, for the foresight lookahead
+        tax_now = 0.0    # today's tax cost per unit of activity (positive = cost)
         for iA_fuel in activity_balance_coord:
             fuel_activity = activities.entities[iA_fuel]
             if fuel_activity.name in taxes_idx_by_name:
-                taxes_effect = -taxes_values[taxes_idx_by_name[fuel_activity.name], iP] * technology_balance[iA_fuel]
+                tax_row = taxes_idx_by_name[fuel_activity.name]
+                taxes_effect = -taxes_values[tax_row, iP] * technology_balance[iA_fuel]
                 vom_adjusted -= taxes_effect
+                tax_terms.append((tax_row, iA_fuel))
+                tax_now -= taxes_effect
 
         # Clean fuel consumption for cogeneration cases
         fuel_consumption = -energy_balance
@@ -210,6 +219,9 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
             weighted_fuels = fuels_now
             weighted_emissions = emissions_now
             weighted_feedin = feedin_now
+            weighted_tax = tax_now
+            weighted_fom = fom_cost[iTb]
+            weighted_vom_raw = vom_cost[iTb]
             # Hourly price ranges of each future period (None when the price source has none: then a
             # flexible technology's future electricity is priced at the plain yearly price).
             ref_ranges = getattr(foresight_reference, 'energy_price_ranges', None)
@@ -238,6 +250,15 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
                 if feedin_terms:
                     balances_t = tech.activity_balances if future_balances is None else future_balances[t][iTb]
                     weighted_feedin += w * sum(feedin_values[row, t] * balances_t[iA] for row, iA in feedin_terms)
+                # FOM and the VOM base are recurring costs paid every year of the technology's life, so
+                # they are priced with period t's own cost entries; the emission tax inside VOM likewise
+                # uses period t's tax schedule on the emissions the technology has in period t. (The
+                # investment is paid once, at construction, so it stays at today's value.)
+                weighted_fom += w * foms_all[iTb, t]
+                weighted_vom_raw += w * voms_all[iTb, t]
+                if tax_terms:
+                    bal_t = technology_balance if future_balances is None else balance_t
+                    weighted_tax += w * sum(taxes_values[row, t] * bal_t[iA] for row, iA in tax_terms)
                 weighted_fuels += w * future_fuels
                 weighted_emissions += w * future_emissions
                 weight_total += w
@@ -247,6 +268,11 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
             # over the same lifetime window the fuel and emission terms use.
             if feedin_terms:
                 vom += cogen_share * (feedin_now - weighted_feedin / weight_total)
+            # Same swap for the recurring VOM base, the emission tax and FOM: today's value out, the
+            # discount-weighted lifetime average in (investment is deliberately left at today's value).
+            vom += cogen_share * ((weighted_vom_raw / weight_total - vom_cost[iTb])
+                                  + (weighted_tax / weight_total - tax_now))
+            fom = (weighted_fom / weight_total / tech.cap2act).item()
         else:
             fuels = fuels_now
             emissions = emissions_now
