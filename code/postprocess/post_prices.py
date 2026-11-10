@@ -91,6 +91,12 @@ def post_prices(dimensions, parameters, activities, technologies, policies, iP):
                     if activity.name in taxes_idx_by_name:
                         idx_tax = taxes_idx_by_name[activity.name]
                         taxes_effect = taxes_values[idx_tax, iP]
+                        # An emission activity's tax is charged to the emitter exactly once, as the VOM term of
+                        # invest_tech_LCOPs. Leaving it in the emission PRICE as well made the LCOP's emissions
+                        # term (price x emission balance) carry the tax a second time, about 1.45x the schedule
+                        # in total. Fuel (energy) taxes stay in the fuel price, which is how they reach buyers.
+                        if activity.energy_idx is None:
+                            taxes_effect = 0
 
                     # Identify if there is a feed-in for this activity.
                     feedin_effect_tech = np.zeros(nT)
