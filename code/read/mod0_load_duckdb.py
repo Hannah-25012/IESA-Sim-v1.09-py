@@ -596,7 +596,15 @@ def _load_technologies(con, periods, activities_names):
         "costs": retro_df["cost"].tolist(),
     })
 
-    return Struct(balancers=balancers, infra=infra, retrofittings=retrofittings)
+    # Feedstocks sheet: per (technology, activity) feedstock coefficient (negative). Sim does not model it; it is carried only so the
+    # final_energy table can separate a naphtha cracker's fuel naphtha from its feedstock naphtha (see mod6_save_duckdb.py).
+    feedstock_use = {}
+    if _table_exists(con, "feedstock_use"):
+        for _t, _a, _f in con.execute("SELECT tech_id, activity_name, fraction FROM feedstock_use").fetchall():
+            if _f is not None:
+                feedstock_use[(_t, _a)] = float(_f)
+
+    return Struct(balancers=balancers, infra=infra, retrofittings=retrofittings, feedstock_use=feedstock_use)
 
 
 def _load_node_emission_targets(con, periods):

@@ -391,6 +391,116 @@ def save_state_duckdb(dimensions, parameters, types, activities, technologies, p
     print(f"Full simulation state saved to {db_path}")
 
 
+# --- Final energy (PJ/y) by end-use sector and carrier ---------------------
+# Same definition as reference-data/model_energy_vs_cbs.py (and the Opt side,
+# julia-backend _period_summary_payload "finalEnergy"): energy carriers
+# delivered to end-use technologies = -coefficient x use over the carrier
+# activities below. Left out: heat-service activities (counted at the fuel going
+# into the heating technology), steel blast furnaces (CBS books their coal as
+# transformation), international transport / bunkers, the propylene plants' LPG
+# (feedstock), and the non-carrier activities (feedstock naphtha/ammonia, ...).
+# Keep the two lists identical across both backends.
+# CHP rule (CBS): see _final_energy_df - CHP fuel is transformation, CHP heat is final 'Heat'.
+FINAL_SECTORS = {"Residential": "Dwellings", "Services": "Services", "Agriculture": "Agriculture",
+                 "Industry": "Industry", "Transport": "Transport"}
+FINAL_CARRIER_OF = {}
+for _a in ("Electricity NL - HV", "Electricity NL - LV"):
+    FINAL_CARRIER_OF[_a] = "Electricity"
+for _a in ("Natural Gas HD", "Natural Gas LD", "Natural Gas LNG", "National Natural Gas"):
+    FINAL_CARRIER_OF[_a] = "Natural gas"
+for _a in ("Road Fuel", "Fuel Oil", "Kerosene", "Other Oil Products", "LPG"):
+    FINAL_CARRIER_OF[_a] = "Petroleum products"
+FINAL_CARRIER_OF["Coal"] = "Coal"
+for _a in ("Biomass", "Wood", "Bio Diesel", "Bio Kerosene", "Bio LPG", "Vegetable Oil", "Bio Road Fuel"):
+    FINAL_CARRIER_OF[_a] = "Renewable (biomass, biofuels)"
+FINAL_CARRIER_OF["Heat LT Network"] = "District heat"
+for _a in ("Hydrogen HD", "Hydrogen LD"):
+    FINAL_CARRIER_OF[_a] = "Hydrogen"
+
+
+# Naphtha crackers burn part of their naphtha as fuel: the technology's naphtha input minus its feedstock use (Feedstocks sheet,
+# table feedstock_use) is fuel, and CBS counts it as industry's use of petroleum products (~23 of 148 PJ per Mt ethylene). Keep
+# identical to julia-backend _period_summary_payload and reference-data/model_energy_vs_cbs.py.
+NAPHTHA_FUEL_CARRIER = {"Naphtha": "Petroleum products", "Bio Naphtha": "Renewable (biomass, biofuels)"}
+
+
+# Steel blast furnaces: CBS books their coal as energy transformation, but still reports a small part as final
+# consumption of the iron and steel industry (13.6 of ~114 PJ in 2025, 13.8 in 2022 = about 12%). Only that share of the
+# furnace's COAL counts as final energy (carrier Coal, sector Industry); its other carriers do not. Keep identical to
+# julia-backend _period_summary_payload and reference-data/model_energy_vs_cbs.py.
+BLAST_FURNACE_COAL_FINAL_SHARE = 0.12
+
+
+def _is_blast_furnace(t):
+    return t.sector == "Industry" and "Blast furnace" in (t.name or "")
+
+
+def _counts_as_final(t):
+    if t.sector not in FINAL_SECTORS:
+        return False
+    name = t.name or ""
+    if t.subsector == "Bunker" or "International" in name or (t.sector == "Transport" and "Conventional Airplane" in name):
+        return False
+    return True
+
+
+def _final_energy_df(tech_entities, activity_entities, technologies, periods):
+    """Rows (sector, carrier, period, pj): sector/carrier named as CBS's table.
+
+    CBS rule for combined heat and power: the fuel burnt in a CHP is energy
+    TRANSFORMATION, and the heat it delivers is final consumption of the carrier
+    "Heat". A counted technology that produces both electricity and a Heat-label
+    activity is therefore a CHP here: its fuel is left out and its heat output is
+    booked as "District heat" in its own sector. Heat-only boilers and heat pumps
+    keep counting their fuel/electricity (CBS: own-use boilers are final fuel use).
+    """
+    tech_use = technologies.balancers.use.yearly
+    act_idx = [(i, FINAL_CARRIER_OF[a.name]) for i, a in enumerate(activity_entities) if a.name in FINAL_CARRIER_OF]
+    elec_cols = [i for i, a in enumerate(activity_entities) if a.name.startswith("Electricity NL")]
+    heat_cols = [i for i, a in enumerate(activity_entities) if a.label == "Heat"]
+    tech_idx = [(i, t) for i, t in enumerate(tech_entities) if _counts_as_final(t)]
+    acc = {}
+    for iP, period in enumerate(periods):
+        ab = balances_for_period(technologies, iP)
+        for i, t in tech_idx:
+            use = float(tech_use[i, iP])
+            if not use:
+                continue
+            sector = FINAL_SECTORS[t.sector]
+            if any(ab[i, j] > 0 for j in elec_cols) and any(ab[i, j] > 0 for j in heat_cols):
+                heat = sum(ab[i, j] for j in heat_cols if ab[i, j] > 0) * use
+                key = (sector, "District heat", period)
+                acc[key] = acc.get(key, 0.0) + heat
+                continue
+            bf = _is_blast_furnace(t)
+            feedstock_use = getattr(technologies, "feedstock_use", None) or {}
+            for j, a_ent in enumerate(activity_entities):
+                carrier_n = NAPHTHA_FUEL_CARRIER.get(a_ent.name)
+                f = feedstock_use.get((t.id, a_ent.name)) if carrier_n else None
+                if f is not None and ab[i, j] < 0:
+                    resid = -ab[i, j] + f          # |input| - |feedstock|, both coefficients are negative
+                    if resid > 0:
+                        key = (sector, carrier_n, period)
+                        acc[key] = acc.get(key, 0.0) + resid * use
+            for j, carrier in act_idx:
+                coef = ab[i, j]
+                if coef >= 0:
+                    continue
+                if "Propylene" in (t.name or "") and activity_entities[j].name == "LPG":
+                    continue
+                # Hydrogen used by "... feedstock" technologies is non-energy use in CBS (2.0 PJ in 2025), not final energy.
+                if carrier == "Hydrogen" and "feedstock" in (t.name or "").lower():
+                    continue
+                share = 1.0
+                if bf:
+                    if carrier != "Coal":
+                        continue
+                    share = BLAST_FURNACE_COAL_FINAL_SHARE
+                key = (sector, carrier, period)
+                acc[key] = acc.get(key, 0.0) - coef * use * share
+    return pd.DataFrame([(s_, c, p_, v) for (s_, c, p_), v in sorted(acc.items())],
+                        columns=["sector", "carrier", "period", "final_pj"])
+
 def save_excel_duckdb(types, activities, technologies, agents, results, db_path):
     """Persist exactly what results_write.py writes to the Excel reports,
     as relational tables (dimension tables for activities/technologies/
@@ -536,6 +646,11 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
     sector_balance_df = pd.DataFrame(rows, columns=["sector", "energy_label", "period", "consumption", "production"])
     _save_table(con, "sectoral_balance", sector_balance_df,
         pk=["sector", "energy_label", "period"], fks=[("period", "periods", "period")])
+
+    # === final energy (PJ/y) per end-use sector and carrier - see _final_energy_df ===
+    _save_table(con, "final_energy",
+        _final_energy_df(tech_entities, activity_entities, technologies, periods),
+        pk=["sector", "carrier", "period"], fks=[("period", "periods", "period")])
 
     # === energy / emission prices (yearly) ===
     _save_table(con, "energy_prices",

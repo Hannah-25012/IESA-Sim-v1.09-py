@@ -278,7 +278,7 @@ def _build_settings(overrides: Optional[dict]) -> dict:
 # out of the default payload since live job results (_run_job) and the
 # existing single-scenario Load path only ever need the cheap 3, while
 # multi-scenario comparison (run.html's Compare flow) wants more per call.
-_EXTRA_OUTPUT_SERIES = {"sectoral_emissions", "technology_stock", "technology_use", "prices", "primary_energy", "capital_new_investment"}
+_EXTRA_OUTPUT_SERIES = {"sectoral_emissions", "technology_stock", "technology_use", "prices", "primary_energy", "final_energy", "capital_new_investment"}
 
 
 def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -> dict:
@@ -341,6 +341,16 @@ def _summarize_output(scenario_name: str, extra: frozenset[str] = frozenset()) -
                     "SELECT energy_label, period, primary_pj AS value FROM primary_energy ORDER BY period, energy_label")
             except duckdb.Error:
                 result["primary_energy"] = []
+
+        # Final energy (PJ/y) per end-use sector and carrier (see
+        # code/write/mod6_save_duckdb.py _final_energy_df). Runs saved before
+        # this table existed report none and need a re-run.
+        if "final_energy" in extra:
+            try:
+                result["final_energy"] = rows(
+                    "SELECT sector, carrier, period, final_pj AS value FROM final_energy ORDER BY period, sector, carrier")
+            except duckdb.Error:
+                result["final_energy"] = []
 
         if "technology_use" in extra:
             result["technology_use"] = rows("""
