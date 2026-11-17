@@ -498,6 +498,13 @@ def _final_energy_df(tech_entities, activity_entities, technologies, periods):
                     if carrier != "Coal":
                         continue
                     share = BLAST_FURNACE_COAL_FINAL_SHARE
+                else:
+                    # Feedstock is NON-ENERGY use in CBS (83140ENG: total final consumption = energy use + non-energy use, e.g. gas 2022 556.4 = 488.3 + 68.2), so for every carrier the technology's feedstock use (Feedstocks sheet, table feedstock_use) is taken off its input and only the rest counts as final energy. Blast furnaces keep their 12% coal rule. Keep identical in the three places.
+                    fs = feedstock_use.get((t.id, activity_entities[j].name))
+                    if fs is not None:
+                        coef = coef - fs          # |input| - |feedstock|, both negative
+                        if coef >= 0:
+                            continue
                 key = (sector, carrier, period)
                 acc[key] = acc.get(key, 0.0) - coef * use * share
     return pd.DataFrame([(s_, c, p_, v) for (s_, c, p_), v in sorted(acc.items())],
