@@ -411,8 +411,10 @@ for _a in ("Natural Gas HD", "Natural Gas LD", "Natural Gas LNG", "National Natu
 for _a in ("Road Fuel", "Fuel Oil", "Kerosene", "Other Oil Products", "LPG"):
     FINAL_CARRIER_OF[_a] = "Petroleum products"
 FINAL_CARRIER_OF["Coal"] = "Coal"
-for _a in ("Biomass", "Wood", "Bio Diesel", "Bio Kerosene", "Bio LPG", "Vegetable Oil", "Bio Road Fuel"):
+for _a in ("Biomass", "Wood", "Bio Diesel", "Bio Kerosene", "Bio LPG", "Vegetable Oil", "Bio Road Fuel",
+           "Ambient Energy", "Geothermal Energy", "Solar Heat"):
     FINAL_CARRIER_OF[_a] = "Renewable (biomass, biofuels)"
+# Heat-pump source heat and geothermal/solar heat (activities Ambient Energy, Geothermal Energy, Solar Heat) are renewable energy delivered to the end user in CBS (ambient 11-22 PJ in dwellings, deep geothermal 7 PJ in greenhouses); counted here like biomass. Keep identical in the three places.
 FINAL_CARRIER_OF["Heat LT Network"] = "District heat"
 for _a in ("Hydrogen HD", "Hydrogen LD"):
     FINAL_CARRIER_OF[_a] = "Hydrogen"
