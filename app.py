@@ -506,6 +506,8 @@ class HandoffExtractRequest(BaseModel):
     sim_scenario: str          # a finished Sim run's output/<scenario_name>/ dir
     merged_db: str             # path returned by POST /input_db (the merged DB to seed)
     handoff: int = 2030        # Opt's first solved period
+    prior_token: Optional[str] = None   # token of the previous /handoff/extract (or /reverse) whose seeded DB holds the fleet history up to the
+                                        # previous hand-off; its fleet_vintage rows are inherited (cost continuity, see handoff_tier1.py)
 
 
 @app.post("/handoff/extract")
@@ -528,7 +530,7 @@ def handoff_extract(req: HandoffExtractRequest):
     token = str(uuid.uuid4())
     out_db = os.path.join(_HANDOFF_DIR, f"{token}_seeded_{req.handoff}.duckdb")
     try:
-        report = seed_from_sim(str(sim_db), req.merged_db, out_db, req.handoff)
+        report = seed_from_sim(str(sim_db), req.merged_db, out_db, req.handoff, prior_db=_handoff_files.get(req.prior_token) if req.prior_token else None)
     except ValueError as e:
         # Precondition failures (all-zero hand-off year, missing year, ...) are
         # user-actionable, not server faults - surface the message verbatim.
@@ -545,6 +547,7 @@ class HandoffReverseRequest(BaseModel):
     harvest: int                   # Sim's year_end for that leg (the leg's other endpoint)
     feed_prices: bool = False      # also seed energy_types."price init" from Opt's
                                     # activity_prices @start (bidirectional chained mode)
+    prior_token: Optional[str] = None   # as in HandoffExtractRequest: carries the fleet history through the Sim leg
 
 
 @app.post("/handoff/reverse")
@@ -560,7 +563,7 @@ def handoff_reverse(req: HandoffReverseRequest):
     token = str(uuid.uuid4())
     out_db = os.path.join(_HANDOFF_DIR, f"{token}_seeded_{req.start}_{req.harvest}.duckdb")
     try:
-        report = seed_from_opt(req.opt_results, req.merged_db, out_db, req.start, req.harvest, req.feed_prices)
+        report = seed_from_opt(req.opt_results, req.merged_db, out_db, req.start, req.harvest, req.feed_prices, prior_db=_handoff_files.get(req.prior_token) if req.prior_token else None)
     except ValueError as e:
         # Precondition failures (all-zero start year, missing period, ...) are
         # user-actionable, not server faults - surface the message verbatim.
@@ -575,6 +578,7 @@ class HandoffSimContinueRequest(BaseModel):
     merged_db: str             # path returned by POST /input_db (the pristine merged DB to seed)
     start: int                 # the period of that run whose stock seeds the next leg
     harvest: int               # the next leg's year_end
+    prior_token: Optional[str] = None   # the previous /handoff/extract whose seeded DB holds the fleet history (cost continuity)
 
 
 # Sim -> Sim continuation for the receding-horizon legs: the next leg resumes
@@ -595,7 +599,7 @@ def handoff_sim_continue(req: HandoffSimContinueRequest):
     token = str(uuid.uuid4())
     out_db = os.path.join(_HANDOFF_DIR, f"{token}_simcont_{req.start}_{req.harvest}.duckdb")
     try:
-        report = seed_sim_from_sim(str(excel_db), req.merged_db, out_db, req.start, req.harvest)
+        report = seed_sim_from_sim(str(excel_db), req.merged_db, out_db, req.start, req.harvest, prior_db=_handoff_files.get(req.prior_token) if req.prior_token else None)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

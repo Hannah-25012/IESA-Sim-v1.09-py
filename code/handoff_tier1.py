@@ -82,6 +82,54 @@ import shutil
 import duckdb
 
 
+# ---------------------------------------------------------------------------
+# Fleet vintage (cost continuity). The stock handed from one engine to the next arrives as a bare quantity (technologies.stock_initial), so the
+# receiving Opt run used to treat it as free: it charges capital cost only for the investments it decides itself, which makes the cost of a
+# receding-horizon round fall round after round (the fleet built in earlier rounds is never charged). `fleet_vintage` carries the investment history
+# with the stock: one row per (technology, investment period) in stock units, in the table/column layout Opt's loader reads (key1 = tech id,
+# key2 = period, value = investment; julia-backend/src/types.jl `fleet_vintage`). Opt charges every row whose period is BEFORE its first solved
+# period for the rest of its economic life (objective.jl, writers.jl "capex_inherited"); it is a constant, so no decision changes.
+# The table is built from the previous seeded DB (`prior_db`, which holds the history up to the previous hand-off) plus the sending engine's own
+# investments up to this hand-off, summed per (technology, period) (a leg's first period holds the previous leg's investments plus its own).
+# ---------------------------------------------------------------------------
+VINTAGE_TABLE = "fleet_vintage"
+
+
+def _vintage_prior(con, prior_db):
+    """Create fleet_vintage in `con` (an open out_db connection) holding the rows of `prior_db`'s fleet_vintage (if it has one). Returns the row count."""
+    con.execute(f"DROP TABLE IF EXISTS {VINTAGE_TABLE}")
+    con.execute(f"CREATE TABLE {VINTAGE_TABLE} (key1 VARCHAR, key2 INTEGER, value DOUBLE)")
+    if not prior_db or not os.path.isfile(prior_db):
+        return 0
+    con.execute(f"ATTACH '{prior_db}' AS prior_v (READ_ONLY)")
+    try:
+        if con.execute("select count(*) from information_schema.tables where table_catalog = 'prior_v' and table_name = ?",
+                       [VINTAGE_TABLE]).fetchone()[0]:
+            con.execute(f"INSERT INTO {VINTAGE_TABLE} SELECT key1, key2, value FROM prior_v.{VINTAGE_TABLE}")
+    finally:
+        con.execute("DETACH prior_v")
+    return con.execute(f"select count(*) from {VINTAGE_TABLE}").fetchone()[0]
+
+
+def _vintage_add(con, select_sql: str) -> int:
+    """ADD the rows `select_sql` returns (key1, key2, value; only value > 0 kept) to the vintage table, summing where (tech, period) already exists:
+    a Sim leg starts from the stock the previous leg built, then invests again in its own first period, so that period's history is the sum of the two.
+    Returns the number of rows added."""
+    con.execute(f"CREATE OR REPLACE TEMP TABLE _v_new AS SELECT * FROM ({select_sql}) WHERE value > 0")
+    n = con.execute("select count(*) from _v_new").fetchone()[0]
+    con.execute(f"CREATE OR REPLACE TEMP TABLE _v_all AS SELECT key1, key2, sum(value) AS value FROM "
+                f"(SELECT key1, key2, value FROM {VINTAGE_TABLE} UNION ALL SELECT key1, key2, value FROM _v_new) GROUP BY 1, 2")
+    con.execute(f"DELETE FROM {VINTAGE_TABLE}")
+    con.execute(f"INSERT INTO {VINTAGE_TABLE} SELECT key1, key2, value FROM _v_all")
+    con.execute("DROP TABLE _v_new"); con.execute("DROP TABLE _v_all")
+    return n
+
+
+def _vintage_report(con) -> dict:
+    rows = con.execute(f"select key2, count(*), round(sum(value), 3) from {VINTAGE_TABLE} group by 1 order by 1").fetchall()
+    return {"rows": sum(r[1] for r in rows), "by_period": {int(r[0]): {"techs": r[1], "investment": r[2]} for r in rows}}
+
+
 def pick_stock_table(sim_tables: set) -> str:
     # per-run excel DB exposes `technology_stock`; full-state DB `technology_stock_evolution`.
     for name in ("technology_stock", "technology_stock_evolution"):
@@ -90,7 +138,7 @@ def pick_stock_table(sim_tables: set) -> str:
     raise ValueError("Sim DB has neither technology_stock nor technology_stock_evolution.")
 
 
-def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int) -> dict:
+def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int, prior_db: str = None) -> dict:
     """Write `out_db` = `merged_db` seeded with Sim's stock at `handoff`.
 
     Never mutates `merged_db` (works on a copy). Returns a structured report;
@@ -232,6 +280,21 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int) -> dic
         ).fetchone()[0]
         con.execute(f"update technology_stocks set dec_planned = NULL where period <= {H}")
 
+        # --- fleet vintage: the investments behind this stock (see the VINTAGE comment above). prior history + Sim's own investments up to the
+        # hand-off, mapped to Opt's tech ids like the stock is. Sim's first period of a leg can invest too, and the hand-off period is the
+        # leg's first, so it is included (period <= H); periods before the leg's own window come from `prior_db`.
+        vintage_prior = _vintage_prior(con, prior_db)
+        vintage_added = 0
+        if "technology_investments" in sim_tables:
+            inv_id_expr = f"""(CASE WHEN EXISTS (
+                SELECT 1 FROM sim.technology_investments i2 WHERE i2.tech_id = t.id
+            ) THEN t.id ELSE t.sim_id END)"""
+            vintage_added = _vintage_add(con, f"""
+                select t.id as key1, i.period as key2, i.investment as value
+                from sim.technology_investments i join technologies t on i.tech_id = {inv_id_expr}
+                where i.period <= {H}""")
+        vintage = _vintage_report(con)
+
         # --- set Opt's solve window to start at the hand-off ---------------
         con.execute("delete from periods_solve")
         con.execute(
@@ -250,13 +313,15 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int) -> dic
             "unit_mismatches": unit_mismatch,
             "duplicate_sim_ids": [{"sim_id": r[0], "opt_rows": r[1]} for r in dupes],
             "full_state_source": "infrastructure_stock_evolution" in sim_tables,
+            "fleet_vintage": {**vintage, "inherited_rows": vintage_prior, "added_rows": vintage_added,
+                              "source": "technology_investments" if "technology_investments" in sim_tables else "none (Sim DB has no technology_investments)"},
         }
     finally:
         con.close()
 
 
 def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, harvest: int,
-                   feed_prices: bool = False) -> dict:
+                   feed_prices: bool = False, prior_db: str = None) -> dict:
     """Write `out_db` = `merged_db` seeded with Opt's realized stock at
     `start`, sliced to the two-period leg [start, harvest] IESA-Sim needs to
     warm-start from `start` and build real power capacity by `harvest` (a
@@ -331,6 +396,15 @@ def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, 
             where s.tech = i.id and s.period = {S}
         """)
 
+        # --- fleet vintage (see the VINTAGE comment above): prior history + Opt's own investments up to `start` (its cap_investments table,
+        # written by julia-backend since the fleet-continuity change). The Sim leg ignores the table; it is carried so the next Opt seed can
+        # inherit it through `prior_db`.
+        vintage_prior = _vintage_prior(con, prior_db)
+        vintage_added = 0
+        if "cap_investments" in opt_tables:
+            vintage_added = _vintage_add(con, f"select tech as key1, period as key2, value from opt_res.cap_investments where period <= {S}")
+        vintage = _vintage_report(con)
+
         # --- re-base planned decommissioning: any event at/before `start` is
         # already reflected in the seeded stock (mirrors seed_from_sim's own
         # "period > H" convention above, going the other way) - leaving it in
@@ -392,12 +466,14 @@ def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, 
             "period_grid": period_grid,
             "prices_fed": prices_fed,
             "infrastructure_carried": infra_matched > 0,
+            "fleet_vintage": {**vintage, "inherited_rows": vintage_prior, "added_rows": vintage_added,
+                              "source": "cap_investments" if "cap_investments" in opt_tables else "none (Opt results have no cap_investments)"},
         }
     finally:
         con.close()
 
 
-def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harvest: int) -> dict:
+def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harvest: int, prior_db: str = None) -> dict:
     """Write `out_db` = `merged_db` seeded with a PREVIOUS Sim run's own
     realized stock at `start`, sliced to the leg [start, harvest].
 
@@ -484,6 +560,19 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
         ).fetchone()[0]
         con.execute(f"update technology_stocks set dec_planned = NULL where period <= {S}")
 
+        # --- fleet vintage (see the VINTAGE comment above): the fleet this leg continues from was built by the previous leg, so its history is the
+        # prior vintage (up to that leg's own first period, already added at the extract that seeded Opt) plus the previous leg's investments in the
+        # periods after its first period up to `start`. The leg's first period itself is added later, by the extract that follows this leg.
+        vintage_prior = _vintage_prior(con, prior_db)
+        vintage_added = 0
+        if "technology_investments" in sim_tables:
+            vintage_added = _vintage_add(con, f"""
+                select t.id as key1, i.period as key2, i.investment as value
+                from sim_res.technology_investments i join technologies t on i.tech_id = t.id
+                where i.period <= {S}
+                  and i.period > (select min(period) from sim_res.technology_investments)""")
+        vintage = _vintage_report(con)
+
         con.execute(f"delete from periods where period < {S} or period > {H}")
         con.execute("""
             update periods set period_order = sub.new_order
@@ -503,6 +592,8 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
             "period_grid": period_grid,
             "infrastructure_carried": infra_matched > 0,
             "source": "sim",
+            "fleet_vintage": {**vintage, "inherited_rows": vintage_prior, "added_rows": vintage_added,
+                              "source": "technology_investments" if "technology_investments" in sim_tables else "none (Sim DB has no technology_investments)"},
         }
     finally:
         con.close()
