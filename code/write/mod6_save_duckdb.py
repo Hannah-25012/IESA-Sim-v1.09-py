@@ -601,6 +601,12 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
         _long2(infra_ids, "infra_id", periods, "period", technologies.infra.stocks.evolution, "stock"),
         pk=["infra_id", "period"], fks=[("period", "periods", "period")])
 
+    # What was built in each period (the stock above is the cumulative result). The handoff carries it as the fleet's investment history so that a
+    # later leg can charge the capital cost of pipes and cables built earlier (handoff_tier1 fleet_vintage), as it does for technologies.
+    _save_table(con, "infrastructure_investments",
+        _long2(infra_ids, "infra_id", periods, "period", technologies.infra.investments, "investment"),
+        pk=["infra_id", "period"], fks=[("period", "periods", "period")])
+
     # === sectoral balance (consumption/production per sector+energy label) ===
     coord_categories = np.array([t.category not in ('Primary', 'Emission', 'Exports') for t in tech_entities])
     tech_sector = np.array([t.sector for t in tech_entities])

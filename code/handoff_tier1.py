@@ -293,6 +293,14 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int, prior_
                 select t.id as key1, i.period as key2, i.investment as value
                 from sim.technology_investments i join technologies t on i.tech_id = {inv_id_expr}
                 where i.period <= {H}""")
+        if "infrastructure_investments" in sim_tables:   # pipes and cables: same history, keyed by infrastructure.id (sim_id when the DBs differ)
+            inf_inv_id = f"""(CASE WHEN EXISTS (
+                SELECT 1 FROM sim.infrastructure_investments i2 WHERE i2.infra_id = f.id
+            ) THEN f.id ELSE f.sim_id END)"""
+            vintage_added += _vintage_add(con, f"""
+                select f.id as key1, i.period as key2, i.investment as value
+                from sim.infrastructure_investments i join infrastructure f on i.infra_id = {inf_inv_id}
+                where i.period <= {H}""")
         vintage = _vintage_report(con)
 
         # --- set Opt's solve window to start at the hand-off ---------------
@@ -314,7 +322,8 @@ def seed_from_sim(sim_db: str, merged_db: str, out_db: str, handoff: int, prior_
             "duplicate_sim_ids": [{"sim_id": r[0], "opt_rows": r[1]} for r in dupes],
             "full_state_source": "infrastructure_stock_evolution" in sim_tables,
             "fleet_vintage": {**vintage, "inherited_rows": vintage_prior, "added_rows": vintage_added,
-                              "source": "technology_investments" if "technology_investments" in sim_tables else "none (Sim DB has no technology_investments)"},
+                              "source": ("technology_investments" if "technology_investments" in sim_tables else "none (Sim DB has no technology_investments)")
+                                        + (" + infrastructure_investments" if "infrastructure_investments" in sim_tables else " (no infrastructure_investments: pipes and cables stay free)")},
         }
     finally:
         con.close()
@@ -571,6 +580,12 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
                 from sim_res.technology_investments i join technologies t on i.tech_id = t.id
                 where i.period <= {S}
                   and i.period > (select min(period) from sim_res.technology_investments)""")
+        if "infrastructure_investments" in sim_tables:   # pipes and cables, same window
+            vintage_added += _vintage_add(con, f"""
+                select f.id as key1, i.period as key2, i.investment as value
+                from sim_res.infrastructure_investments i join infrastructure f on i.infra_id = f.id
+                where i.period <= {S}
+                  and i.period > (select min(period) from sim_res.infrastructure_investments)""")
         vintage = _vintage_report(con)
 
         con.execute(f"delete from periods where period < {S} or period > {H}")
@@ -593,7 +608,8 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
             "infrastructure_carried": infra_matched > 0,
             "source": "sim",
             "fleet_vintage": {**vintage, "inherited_rows": vintage_prior, "added_rows": vintage_added,
-                              "source": "technology_investments" if "technology_investments" in sim_tables else "none (Sim DB has no technology_investments)"},
+                              "source": ("technology_investments" if "technology_investments" in sim_tables else "none (Sim DB has no technology_investments)")
+                                        + (" + infrastructure_investments" if "infrastructure_investments" in sim_tables else " (no infrastructure_investments: pipes and cables stay free)")},
         }
     finally:
         con.close()
