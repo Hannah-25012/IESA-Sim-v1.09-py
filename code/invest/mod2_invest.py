@@ -16,7 +16,7 @@ from invest_techstocks_def import invest_techstocks_def
 from invest_decommissioning import invest_decommissioning
 
 def mod2_invest(dimensions, parameters, activities, technologies, agents, policies, iP, foresight_reference=None,
-                 frozen_mix=False):
+                 frozen_mix=False, leg_mode=False, debug_dump=None):
 
     # Extract parameters
     if iP > 0:
@@ -117,7 +117,9 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
         input("Press Enter to continue...")
 
     # === Invest in power activities (but not for the first period) ===
-    if iP > 0:
+    # leg_mode: the first period of a leg that continues a finished run is a normal period (leg_carry.py supplies the previous period's
+    # generator indicators), so power investment runs there too; only the true first period of the model skips it.
+    if iP > 0 or leg_mode:
         print("--Investing in power generation technologies...")
         investments_power = invest_power_technologies(
             dimensions, parameters, activities, technologies, agents, tech_stock_new, iP,
@@ -157,4 +159,48 @@ def mod2_invest(dimensions, parameters, activities, technologies, agents, polici
         retrofit_options, retrofit_potential, tech_stock_new_original, iP
     )
 
+    if debug_dump:
+        _dump_invest_state(debug_dump, activities, technologies, iP, dict(
+            tech_stock_exist=tech_stock_exist, decommissionings=decommissionings, tech_stock_new_original=tech_stock_new_original,
+            retrofit_potential=retrofit_potential, retrofit_cost=retrofit_cost, investment_potential=investment_potential,
+            activity_gap_drivers=activity_gap, investments_drivers=investments_drivers, investments_nerghg=investments_nerghg,
+            investments_ccus=investments_ccus, investments_energy=investments_energy, investments_power=investments_power,
+            preliminary_investments=preliminary_investments, forced_decommissionings=forced_decommissionings,
+            tech_stock_after_all=tech_stock_new))
+
     return activities, technologies
+
+
+def _dump_invest_state(out_dir, activities, technologies, iP, arrays):
+    """Debug only (settings debug_dump): save this period's intermediate investment arrays so two runs can be compared array by array."""
+    import os
+    extra = {}
+    try:
+        _pe = activities.energies.prices
+        if iP == 0 and getattr(_pe, 'prev', None) is not None:
+            extra['prices_used_energy'] = _pe.prev.yearly
+            extra['prices_used_emission'] = activities.emissions.prices.prev.yearly
+            extra['price_ranges_used'] = _pe.prev.ranges
+        elif iP == 0:
+            extra['prices_used_energy'] = _pe.initialized
+            extra['prices_used_emission'] = activities.emissions.prices.initialized
+        else:
+            extra['prices_used_energy'] = _pe.yearly[:, iP - 1]
+            extra['prices_used_emission'] = activities.emissions.prices.yearly[:, iP - 1]
+            extra['price_ranges_used'] = _pe.ranges[:, :, iP - 1]
+        extra['activity_volumes'] = activities.volumes[:, iP]
+        extra['lcop_values'] = technologies.balancers.lcops.values[:, iP]
+        extra['mca_matrix'] = technologies.balancers.mca.matrix[:, :, iP]
+        extra['stock_max'] = technologies.balancers.stocks.max[:, iP]
+        extra['stock_min'] = technologies.balancers.stocks.min[:, iP]
+        extra['investment_costs'] = technologies.balancers.costs.investments[:, iP]
+    except Exception as e:
+        extra['_error'] = np.array([str(e)])
+    out = {}
+    for k, v in {**arrays, **extra}.items():
+        try:
+            out[k] = np.asarray(v, dtype=float)
+        except Exception:
+            pass
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez_compressed(os.path.join(out_dir, f"debug_invest_{int(activities.periods[iP])}.npz"), **out)

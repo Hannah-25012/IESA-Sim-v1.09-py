@@ -19,9 +19,13 @@ def invest_power_technologies(dimensions, parameters, activities, technologies, 
     tech_stock = technologies.balancers.stocks.evolution[:, iP]
     tech_stock_min = technologies.balancers.stocks.min[:, iP]
     tech_stock_max = technologies.balancers.stocks.max[:, iP]
-    generator_capt_rate = technologies.balancers.generators.CR[:, iP-1]
-    generator_norm_ut_fact = technologies.balancers.generators.NUF[:, iP-1]
-    generator_cash_flow = technologies.balancers.generators.CF[:, iP-1]
+    _gens = technologies.balancers.generators
+    if iP == 0:   # only reachable in leg_mode (mod2_invest): the previous run's generator indicators, carried in by leg_carry.py
+        generator_capt_rate, generator_norm_ut_fact, generator_cash_flow = _gens.prev.CR, _gens.prev.NUF, _gens.prev.CF
+    else:
+        generator_capt_rate = _gens.CR[:, iP-1]
+        generator_norm_ut_fact = _gens.NUF[:, iP-1]
+        generator_cash_flow = _gens.CF[:, iP-1]
     multi_criteria_performance_tech = technologies.balancers.mca.matrix[:, :, iP]
     agent_profiles = agents.profiles
     multi_criteria_categories = agents.criteria.categories

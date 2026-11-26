@@ -14,6 +14,7 @@ for _phase_dir in ('read', 'initialize', 'invest', 'dispatch', 'postprocess', 'w
 
 import time
 import pickle
+import numpy as np
 from pathlib import Path
 from mod0_read_data_save_duck import mod0_read_data_save_duck
 from mod0_load_duckdb import load_from_duckdb
@@ -100,6 +101,11 @@ def main(settings):
     # a flag check duplicated in both. Taxes are a cost, not a subsidy, and
     # stay untouched.
     apply_subsidies = settings.get('apply_subsidies', True)
+    # Leg mode - off by default (byte-identical to a normal run). On for a Sim leg that continues a finished run from the period before its
+    # first period (handoff sim_continue with prev=...): the leg's first period then reads the carried previous-period prices and generator
+    # indicators and invests in power like any later period. See leg_carry.py.
+    leg_mode = settings.get('leg_mode', False)
+    debug_dump = os.path.join('output', settings['scenario_name']) if settings.get('debug_dump', False) else None
     print("Settings were successfully implemented")
 
     # Read the data from the excel input file into the database, if requested.
@@ -152,6 +158,10 @@ def main(settings):
         technologies.infra.entities = infra_entities
         print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 
+        if leg_mode:
+            from leg_carry import load_leg_carry
+            print(f"leg_mode: carried previous-period state loaded: {load_leg_carry(db_path, technologies, activities)}")
+
         # Opt-sourced foresight: build the reference here, on pass 1, the
         # first point activity names/periods/fallback prices all exist -
         # unlike the self-iterated case, this reference doesn't change
@@ -190,7 +200,8 @@ def main(settings):
             print(f"-Determining investments for the period: {periods[iP]}...")
             activities, technologies = mod2_invest(
                 dimensions, parameters, activities, technologies, agents, policies, iP,
-                foresight_reference=foresight_reference, frozen_mix=frozen_mix
+                foresight_reference=foresight_reference, frozen_mix=frozen_mix, leg_mode=leg_mode,
+                debug_dump=debug_dump
             )
             print("-Investment module routine complete.")
             print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
@@ -210,6 +221,15 @@ def main(settings):
             print("-Parameters postprocessed.")
 
             # Message for finalized period
+            # The decommissioning matrix as the NEXT period will find it: planned retirements, the expiry of every investment so far, the
+            # "primary" technologies' retirements invest_techstocks_def wrote forward, and the corrections for retrofits. A later leg that
+            # continues this run from this period starts from exactly this matrix (handoff_tier1.seed_sim_from_sim, prev=...) - none of it
+            # can be rebuilt from the database alone.
+            _bal = technologies.balancers
+            if getattr(_bal, 'decom_after', None) is None:
+                _bal.decom_after = np.zeros(np.shape(_bal.decommissionings) + (n_periods,), dtype=float)
+            _bal.decom_after[:, :, iP] = _bal.decommissionings
+
             print(f"Period {periods[iP]} was finalized.")
             print(f"Time elapsed: {time.perf_counter() - t_start:.2f} seconds")
 

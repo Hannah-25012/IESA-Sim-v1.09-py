@@ -227,6 +227,15 @@ _DEFAULT_SETTINGS = {
     # policies.feedins its "Feed-In subsidies" table - both get zeroed;
     # policies.taxes (a cost, not a subsidy) is untouched.
     "apply_subsidies": True,
+    # Leg mode - off by default (byte-identical to every run before it existed). On for a Sim leg that continues a finished run from the
+    # period BEFORE its first period (POST /handoff/sim_continue with `prev`): the leg's first period then reads the previous period's
+    # prices and generator indicators carried in the seeded DB and invests in power like any later period (code/leg_carry.py). Needs the
+    # leg_carry_* tables that sim_continue(prev=...) writes; fails loudly without them.
+    "leg_mode": False,
+    # Debug dump - off by default. When true every period's investment step writes its intermediate arrays (stocks, decommissionings, gaps,
+    # LCOPs, multi-criteria matrix, investments per module, the prices it priced with) to output/<scenario>/debug_invest_<period>.npz, to find
+    # where two runs that should agree (e.g. a continuous run and a leg_mode leg) first diverge. Costs a few MB per run; changes nothing else.
+    "debug_dump": False,
 }
 
 
@@ -270,6 +279,8 @@ def _build_settings(overrides: Optional[dict]) -> dict:
         "foresight_opt_db": merged["foresight_opt_db"],
         "frozen_mix": merged["frozen_mix"],
         "apply_subsidies": merged["apply_subsidies"],
+        "leg_mode": merged["leg_mode"],
+        "debug_dump": merged["debug_dump"],
     }
 
 
@@ -579,6 +590,9 @@ class HandoffSimContinueRequest(BaseModel):
     start: int                 # the period of that run whose stock seeds the next leg
     harvest: int               # the next leg's year_end
     prior_token: Optional[str] = None   # the previous /handoff/extract whose seeded DB holds the fleet history (cost continuity)
+    prev: Optional[int] = None          # leg mode: seed the stock of this period (the one before `start`) and let `start` be a real decision
+                                        # period, as in one continuous run; run the leg with leg_mode=true (see handoff_tier1.seed_sim_from_sim)
+    anchor_is_leg: bool = False         # the anchor run is itself a leg: its first period counts in the fleet history
 
 
 # Sim -> Sim continuation for the receding-horizon legs: the next leg resumes
@@ -599,7 +613,9 @@ def handoff_sim_continue(req: HandoffSimContinueRequest):
     token = str(uuid.uuid4())
     out_db = os.path.join(_HANDOFF_DIR, f"{token}_simcont_{req.start}_{req.harvest}.duckdb")
     try:
-        report = seed_sim_from_sim(str(excel_db), req.merged_db, out_db, req.start, req.harvest, prior_db=_handoff_files.get(req.prior_token) if req.prior_token else None)
+        report = seed_sim_from_sim(str(excel_db), req.merged_db, out_db, req.start, req.harvest,
+                                   prior_db=_handoff_files.get(req.prior_token) if req.prior_token else None,
+                                   prev=req.prev, anchor_is_leg=req.anchor_is_leg)
     except ValueError as e:
         raise HTTPException(400, str(e))
 

@@ -676,6 +676,25 @@ def save_excel_duckdb(types, activities, technologies, agents, results, db_path)
         _long2(emission_names, "activity_name", periods, "period", activities.emissions.prices.yearly, "price"),
         pk=["activity_name", "period"], fks=[("activity_name", "activities", "name"), ("period", "periods", "period")])
 
+    # === what a later leg needs to continue this run from any of its periods (handoff sim_continue with prev=..., leg_mode; see leg_carry.py) ===
+    # the energy price-duration ranges and each generator's indicators, per period: the only previous-period inputs the investment step reads
+    # that the tables above do not already hold.
+    _save_table(con, "energy_price_ranges",
+        _long3(range(len(activities.energies.prices.ranges)), "price_range_idx", energy_names, "activity_name", periods, "period",
+               activities.energies.prices.ranges, "price"),
+        pk=["price_range_idx", "activity_name", "period"], fks=[("period", "periods", "period")])
+    _after = getattr(technologies.balancers, 'decom_after', None)
+    if _after is not None:
+        _n = _after.shape[2]
+        _df = _long3(tech_ids, "tech_id", periods, "period", periods[:_n], "after_period", _after, "decommissioning")
+        _save_table(con, "decommissions_after", _df[_df["decommissioning"].abs() > 1e-12].reset_index(drop=True),
+                    pk=["tech_id", "period", "after_period"], fks=[("period", "periods", "period")])
+    _save_table(con, "generator_indicators",
+        _long2(tech_ids, "tech_id", periods, "period", technologies.balancers.generators.NUF, "nuf").merge(
+            _long2(tech_ids, "tech_id", periods, "period", technologies.balancers.generators.CR, "capture_rate"), on=["tech_id", "period"]).merge(
+            _long2(tech_ids, "tech_id", periods, "period", technologies.balancers.generators.CF, "cash_flow"), on=["tech_id", "period"]),
+        pk=["tech_id", "period"], fks=[("period", "periods", "period")])
+
     # === LCOPs / MCAs / agent choices ===
     _save_table(con, "technology_lcops",
         _long3(tech_ids, "tech_id", range(len(technologies.balancers.lcops.categories)), "lcop_category_idx", periods, "period",

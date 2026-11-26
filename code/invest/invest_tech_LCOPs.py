@@ -24,7 +24,13 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
     tech_entities = technologies.balancers.entities
     energy_activities = [a for a in activities.entities if a.is_energy]
     periods = activities.periods
-    if iP == 0:
+    _prev_e = getattr(activities.energies.prices, 'prev', None)   # leg_mode: the previous run's prices at the period before this leg
+    energy_prices_ranges = None
+    if iP == 0 and _prev_e is not None:
+        energy_prices = _prev_e.yearly
+        emission_prices = activities.emissions.prices.prev.yearly
+        energy_prices_ranges = _prev_e.ranges
+    elif iP == 0:
         energy_prices = activities.energies.prices.initialized
         emission_prices = activities.emissions.prices.initialized
     else:
@@ -93,7 +99,7 @@ def invest_tech_LCOPs(dimensions, activities, technologies, policies, retrofit_p
         # or a blend of the yearly average and that cheap-hours price (DR shifting). It is a function so the
         # foresight lookahead below can apply the SAME adjustment to each future period's own prices and
         # price ranges, instead of mixing a cheap-hours price for today with plain averages for the future.
-        flex_tech = ((tech.shedding_guarantee > 0) or (tech.flexibility_form == 'DR shifting')) and (iP > 0)
+        flex_tech = ((tech.shedding_guarantee > 0) or (tech.flexibility_form == 'DR shifting')) and (iP > 0 or energy_prices_ranges is not None)
         if flex_tech:
 
             # Find which energy activity is also an electricity activity being used

@@ -482,7 +482,8 @@ def seed_from_opt(opt_results_db: str, merged_db: str, out_db: str, start: int, 
         con.close()
 
 
-def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harvest: int, prior_db: str = None) -> dict:
+def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harvest: int, prior_db: str = None,
+                      prev: int = None, anchor_is_leg: bool = False) -> dict:
     """Write `out_db` = `merged_db` seeded with a PREVIOUS Sim run's own
     realized stock at `start`, sliced to the leg [start, harvest].
 
@@ -502,14 +503,30 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
     save_excel_duckdb); a run saved before that table existed leaves
     infrastructure at the merged DB's own initial values and the report says so.
 
+    prev (leg mode): seed the stock of the period BEFORE `start` and let `start` be a real decision period, as it is in one continuous run.
+    Without it the leg is seeded with the stock AT `start`, which already contains `start`'s own investments, and then decides `start` a
+    second time (measured on the r2 -> r3 hand-off: 505 units dropped and 702 added in the leg's first period). With prev:
+      - stock_initial / infrastructure stock = the stock at prev, and dec_planned is cleared only up to prev;
+      - dec_planned for the leg's periods becomes the decommissioning matrix exactly as the continuous run had it at the end of prev (saved
+        by every Sim run in decommissions_after): planned retirements, the expiry of every earlier investment, the primary technologies'
+        retirements written forward, and the retrofit corrections - none of which a seeded leg could rebuild from the database;
+      - the previous period's prices, price-duration ranges and generator indicators are carried in leg_carry_* tables for settings leg_mode
+        (leg_carry.py), so the first leg period can invest in power and price its LCOPs from realized prices like any later period.
+    anchor_is_leg: the Sim run being continued is itself a leg, so its first period is a real period and its investments count in the
+    fleet history (for the original full run the first period is the calibrated initial year and stays out, as before).
+
     Never mutates `merged_db`. Raises ValueError on a fatal precondition.
     """
     for p in (sim_db, merged_db):
         if not os.path.isfile(p):
             raise ValueError(f"not found: {p}")
     S, H = int(start), int(harvest)
+    P = None if prev is None else int(prev)
+    SP = S if P is None else P          # the period whose stock seeds the leg
     if S >= H:
         raise ValueError(f"start ({S}) must be before harvest ({H}).")
+    if P is not None and P >= S:
+        raise ValueError(f"prev ({P}) must be before start ({S}).")
 
     os.makedirs(os.path.dirname(os.path.abspath(out_db)), exist_ok=True)
     shutil.copyfile(merged_db, out_db)
@@ -521,14 +538,14 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
 
         sim_periods = [r[0] for r in con.execute(
             f"select distinct period from sim_res.{stock_tbl} order by period").fetchall()]
-        if S not in sim_periods:
-            raise ValueError(f"start {S} not in the Sim run's periods {sim_periods}.")
+        if SP not in sim_periods:
+            raise ValueError(f"{'prev' if P is not None else 'start'} {SP} not in the Sim run's periods {sim_periods}.")
         start_total = con.execute(
-            f"select coalesce(sum(abs(stock)), 0) from sim_res.{stock_tbl} where period = {S}").fetchone()[0]
+            f"select coalesce(sum(abs(stock)), 0) from sim_res.{stock_tbl} where period = {SP}").fetchone()[0]
         if start_total == 0:
-            raise ValueError(f"Sim stock at {S} is all-zero - that period was not simulated.")
+            raise ValueError(f"Sim stock at {SP} is all-zero - that period was not simulated.")
         db_periods = [r[0] for r in con.execute("select period from periods order by period").fetchall()]
-        missing = [y for y in (S, H) if y not in db_periods]
+        missing = [y for y in (S, H) + (() if P is None else (P,)) if y not in db_periods]
         if missing:
             raise ValueError(f"period(s) {missing} not in the merged DB's own periods {db_periods}.")
 
@@ -541,12 +558,12 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
         tech_key = "t.id"
         matched = con.execute(f"""
             select count(*) from technologies t
-            join sim_res.{stock_tbl} s on s.tech_id = {tech_key} and s.period = {S}
+            join sim_res.{stock_tbl} s on s.tech_id = {tech_key} and s.period = {SP}
         """).fetchone()[0]
         con.execute(f"""
             update technologies t set stock_initial = s.stock
             from sim_res.{stock_tbl} s
-            where s.tech_id = {tech_key} and s.period = {S}
+            where s.tech_id = {tech_key} and s.period = {SP}
         """)
 
         infra_matched = 0
@@ -556,37 +573,102 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
             infra_key = "i.id"
             infra_matched = con.execute(f"""
                 select count(*) from infrastructure i
-                join sim_res.infrastructure_stock s on s.infra_id = {infra_key} and s.period = {S}
+                join sim_res.infrastructure_stock s on s.infra_id = {infra_key} and s.period = {SP}
             """).fetchone()[0]
             con.execute(f"""
                 update infrastructure i set stock_initial = s.stock
                 from sim_res.infrastructure_stock s
-                where s.infra_id = {infra_key} and s.period = {S}
+                where s.infra_id = {infra_key} and s.period = {SP}
             """)
 
         decom_cleared = con.execute(
-            f"select count(*) from technology_stocks where dec_planned is not null and period <= {S}"
+            f"select count(*) from technology_stocks where dec_planned is not null and period <= {SP}"
         ).fetchone()[0]
-        con.execute(f"update technology_stocks set dec_planned = NULL where period <= {S}")
+        con.execute(f"update technology_stocks set dec_planned = NULL where period <= {SP}")
 
         # --- fleet vintage (see the VINTAGE comment above): the fleet this leg continues from was built by the previous leg, so its history is the
         # prior vintage (up to that leg's own first period, already added at the extract that seeded Opt) plus the previous leg's investments in the
         # periods after its first period up to `start`. The leg's first period itself is added later, by the extract that follows this leg.
         vintage_prior = _vintage_prior(con, prior_db)
         vintage_added = 0
+        # Which of the run's investments are not yet in the inherited history. Classic mode: everything after the run's first period (the
+        # calibrated initial year), up to `start`. Leg mode: the history already holds everything up to its latest period (the extract that
+        # seeded Opt for this same hand-off added it), so only what lies beyond that, up to prev; a run that is itself a leg counts its first
+        # period (a real decision period), the full original run still leaves its first period out.
+        prior_max = con.execute(f"select max(key2) from {VINTAGE_TABLE}").fetchone()[0]
+        def _lower(table):
+            if P is not None and prior_max is not None:
+                return str(int(prior_max))
+            if anchor_is_leg:
+                return "-1"
+            return f"(select min(period) from sim_res.{table})"
         if "technology_investments" in sim_tables:
             vintage_added = _vintage_add(con, f"""
                 select t.id as key1, i.period as key2, i.investment as value
                 from sim_res.technology_investments i join technologies t on i.tech_id = t.id
-                where i.period <= {S}
-                  and i.period > (select min(period) from sim_res.technology_investments)""")
+                where i.period <= {SP}
+                  and i.period > {_lower('technology_investments')}""")
         if "infrastructure_investments" in sim_tables:   # pipes and cables, same window
             vintage_added += _vintage_add(con, f"""
                 select f.id as key1, i.period as key2, i.investment as value
                 from sim_res.infrastructure_investments i join infrastructure f on i.infra_id = f.id
-                where i.period <= {S}
-                  and i.period > (select min(period) from sim_res.infrastructure_investments)""")
+                where i.period <= {SP}
+                  and i.period > {_lower('infrastructure_investments')}""")
         vintage = _vintage_report(con)
+
+        # --- leg mode: the expiry schedule and the carried previous-period state (see the docstring) ---
+        leg = None
+        if P is not None:
+            if "decommissions_after" not in sim_tables:
+                raise ValueError("the Sim run lacks decommissions_after: it was run before leg mode existed; re-run it with the current Sim code to continue it as a leg.")
+            # The decommissioning matrix exactly as the continuous run had it at the end of period prev, for the leg's own periods. dec_planned
+            # IS that matrix in the database form Sim reads, so this replaces it (cleared first: the merged DB's own planned retirements are
+            # already inside the saved matrix, together with every expiry, the primary technologies' forward retirements and the retrofit
+            # corrections that the database cannot reproduce).
+            con.execute(f"update technology_stocks set dec_planned = NULL where period >= {S}")
+            con.execute(f"""
+                update technology_stocks set dec_planned = a.decommissioning
+                from sim_res.decommissions_after a
+                where a.tech_id = technology_stocks.tech_id and a.period = technology_stocks.period
+                  and a.after_period = {P} and a.period >= {S} and a.period <= {H}
+            """)
+            matrix_rows = con.execute(f"select count(*) from technology_stocks where dec_planned is not null and period >= {S}").fetchone()[0]
+            # Sim reads these tables with "carry the nearest earlier value forward into a missing period" (mod0_load_duckdb._pivot_carry): a
+            # merged database leaves most (technology, period) limits and costs empty and relies on that carry. A leg's period grid starts at
+            # `start`, so the carry has nothing before it and the limits set in earlier periods (a minimum stock of 1,050 set for 2022, say)
+            # would silently vanish. Write the carried value into the leg's own periods here, before the earlier periods are cut off.
+            carried_fill = {}
+            for table, key, cols in (("technology_stocks", "tech_id", ("min", "max")),
+                                     ("technology_costs", "tech_id", ("investment", "fom", "vom")),
+                                     ("infrastructure_stocks", "infra_id", ("min", "max")),
+                                     ("infrastructure_costs", "infra_id", ("investment", "fom")),
+                                     ("activity_volumes", "activity_name", ("value",))):
+                if not con.execute("select count(*) from information_schema.tables where table_name = ?", [table]).fetchone()[0]:
+                    continue
+                for col in cols:
+                    before = con.execute(f'select count(*) from {table} where period >= {S} and "{col}" is null').fetchone()[0]
+                    con.execute(f"""
+                        update {table} set "{col}" = (
+                            select p."{col}" from {table} p
+                            where p.{key} = {table}.{key} and p.period < {table}.period and p."{col}" is not null
+                            order by p.period desc limit 1)
+                        where period >= {S} and "{col}" is null
+                    """)
+                    after = con.execute(f'select count(*) from {table} where period >= {S} and "{col}" is null').fetchone()[0]
+                    if before != after:
+                        carried_fill[f"{table}.{col}"] = before - after
+            carry_src = {"leg_carry_energy_prices": ("energy_prices", "activity_name, price", "activity_name, price"),
+                         "leg_carry_emission_prices": ("emission_prices", "activity_name, price", "activity_name, price"),
+                         "leg_carry_energy_ranges": ("energy_price_ranges", "activity_name, price_range_idx, price", "activity_name, price_range_idx, price"),
+                         "leg_carry_generators": ("generator_indicators", "tech_id, nuf, capture_rate, cash_flow", "tech_id, nuf, capture_rate, cash_flow")}
+            absent = [src for _, (src, _, _) in carry_src.items() if src not in sim_tables]
+            if absent:
+                raise ValueError(f"the Sim run lacks {absent}: it was run before leg mode existed; re-run it with the current Sim code to continue it as a leg.")
+            for dst, (src, cols, _) in carry_src.items():
+                con.execute(f"drop table if exists {dst}")
+                con.execute(f"create table {dst} as select {cols} from sim_res.{src} where period = {P}")
+            leg = {"prev": P, "decommissioning_matrix_rows": matrix_rows, "carried_forward_into_leg": carried_fill,
+                   "carried": {dst: con.execute(f"select count(*) from {dst}").fetchone()[0] for dst in carry_src}}
 
         con.execute(f"delete from periods where period < {S} or period > {H}")
         con.execute("""
@@ -607,6 +689,7 @@ def seed_sim_from_sim(sim_db: str, merged_db: str, out_db: str, start: int, harv
             "period_grid": period_grid,
             "infrastructure_carried": infra_matched > 0,
             "source": "sim",
+            "leg": leg,
             "fleet_vintage": {**vintage, "inherited_rows": vintage_prior, "added_rows": vintage_added,
                               "source": ("technology_investments" if "technology_investments" in sim_tables else "none (Sim DB has no technology_investments)")
                                         + (" + infrastructure_investments" if "infrastructure_investments" in sim_tables else " (no infrastructure_investments: pipes and cables stay free)")},
